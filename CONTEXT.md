@@ -24,10 +24,10 @@ Target: a working MVP built over one weekend. Favor simple and shippable over cl
 - **Backend:** Node.js + Express
 - **Database:** MongoDB (Atlas) + Mongoose
 - **Auth:** Clerk (`@clerk/react` on the frontend, `@clerk/express` on the backend)
-- **LLM:** Google Gen AI SDK (`@google/genai`), model from `GEMINI_MODEL` (default `gemini-2.0-flash`), called directly
+- **LLM:** Google Gemini via `@google/genai`, accessed only through `server/services/llmProvider.js`. Model from `GEMINI_MODEL` (default `gemini-flash-latest`). Anthropic is not used.
 - **Payments:** Razorpay, **parked** for later. Do NOT build payments now.
 
-Do NOT use LangChain or similar agent frameworks. The interviewer is one LLM call per turn with server-held state.
+Do NOT use LangChain or similar agent frameworks. The interviewer is one LLM call per turn with server-held state. Do not import vendor SDKs from routes or `interviewEngine.js`.
 
 ## Core concept: how the interviewer works
 
@@ -101,7 +101,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 
 ## Implementation rules and gotchas
 
-- **Streaming:** use `fetch` with `response.body.getReader()` on the frontend, NOT `EventSource` (it can't send the Clerk `Authorization` header). Backend uses `ai.models.generateContentStream(...)` and writes text chunks to `res`.
+- **Streaming:** use `fetch` with `response.body.getReader()` on the frontend, NOT `EventSource` (it can't send the Clerk `Authorization` header). Backend streams via `llmProvider.streamChat` (Gemini under the hood) and writes text chunks to `res`.
 - **Store assistant TEXT only** in message history. Do not store tool/function-call payloads in `messages[].content`, or later turns get polluted. Phase state lives in `session.phase`.
 - **Phase changes apply on the next turn.** The reply being streamed was generated under the old phase. That's intended.
 - The model must write its spoken reply FIRST, then call `advance_phase` if appropriate.
@@ -121,6 +121,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
   routes/sessions.js   // create/list/get sessions, end interview, list problems
   services/evaluator.js
   services/interviewEngine.js
+  services/llmProvider.js   // only module that imports @google/genai
   models/Session.js
   models/Problem.js
   seed/problems.js     // 3 hand-written briefs
@@ -143,7 +144,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 6. React Flow canvas + diagram JSON in the prompt
 7. Evaluator, more problems, session history, deploy
 
-Currently at: Milestones 1–4 complete; LLM provider is Google Gemini (`@google/genai`). Living docs in `DECISIONS.md` / `FLOW.md`. Next: prompt tuning, React Flow canvas, evaluator.
+Currently at: Milestones 1–4 complete; LLM isolated in `llmProvider.js` (Gemini `gemini-flash-latest`). Next: React Flow canvas, evaluator.
 
 ## Out of scope for the MVP
 

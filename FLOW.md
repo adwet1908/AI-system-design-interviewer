@@ -1,6 +1,6 @@
 # System flow map
 
-**Last verified against commit `ebdd168` (Gemini migration).**  
+**Last verified against commit (see git log: llmProvider / gemini-flash-latest).**  
 Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (product rules).
 
 ---
@@ -28,7 +28,8 @@ Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (p
 | `server/prompts.js` | Persona, phases, tools, `buildSystemPrompt` |
 | `server/routes/sessions.js` | Problems + session CRUD/end |
 | `server/routes/interview.js` | Streaming interview turn + persistence |
-| `server/services/interviewEngine.js` | Transport-agnostic `runTurn` → Gemini |
+| `server/services/interviewEngine.js` | Transport-agnostic `runTurn` (no vendor SDK) |
+| `server/services/llmProvider.js` | Only module importing `@google/genai`; `streamChat` |
 | `server/services/evaluator.js` | Stub evaluation on end |
 | `server/models/Session.js` | Session schema + index |
 | `server/models/Problem.js` | Problem brief schema |
@@ -47,6 +48,7 @@ flowchart LR
   Clerk["Clerk"]
   Express["Express server.js"]
   Engine["interviewEngine.runTurn"]
+  LLM["llmProvider.streamChat"]
   Mongo["MongoDB"]
   Gemini["Google Gemini API"]
 
@@ -55,7 +57,8 @@ flowchart LR
   Express -->|"verify JWT via clerkMiddleware + getAuth"| Clerk
   Express --> Engine
   Express --> Mongo
-  Engine --> Gemini
+  Engine --> LLM
+  LLM --> Gemini
   Engine -->|"onText chunks"| Express
   Express -->|"text/plain stream"| Browser
 ```
@@ -111,7 +114,8 @@ sequenceDiagram
   participant DB as Session / Problem
   participant Eng as runTurn
   participant Prompts as buildSystemPrompt
-  participant Gem as Gemini generateContentStream
+  participant LLM as llmProvider.streamChat
+  participant Gem as Gemini API
 
   Chat->>App: onSend(text) or onStart('')
   App->>App: getToken(); AbortController
@@ -121,14 +125,16 @@ sequenceDiagram
   API->>DB: Problem.findOne({slug})
   API->>Eng: runTurn({session, problem, userText, diagram, onText})
   Eng->>Prompts: buildSystemPrompt(...)
-  Eng->>Gem: generateContentStream(...)
+  Eng->>LLM: streamChat({systemInstruction, messages, tools})
+  LLM->>Gem: generateContentStream (systemInstruction + user/model roles)
   loop chunks
-    Gem-->>Eng: chunk.text
+    Gem-->>LLM: chunk.text
+    LLM-->>Eng: onText(chunk)
     Eng-->>API: onText(chunk)
     API-->>App: res.write(chunk)
     App-->>Chat: setStreamingText
   end
-  Gem-->>Eng: functionCalls? advance_phase
+  LLM-->>Eng: functionCalls? advance_phase (text only persisted)
   Eng-->>API: {assistantText, phaseAdvanced, nextPhase}
   API->>DB: persistTurn (messages + maybe session.phase)
   API-->>App: res.end()
@@ -154,10 +160,8 @@ sequenceDiagram
 14. **Stream headers** — `Content-Type: text/plain`; wire `req` close → `abortController.abort()`.
 15. **Engine** — `runTurn` (`server/services/interviewEngine.js`):
     - `buildSystemPrompt({ problem, phase: session.phase, diagram })` (`server/prompts.js`)
-    - Map history to Gemini `user`/`model` contents via `toGeminiContents`
-    - `ai.models.generateContentStream({ model, contents, config: { systemInstruction, tools?, abortSignal? } })`
-    - Each `chunk.text` → `onText` → `res.write`
-    - Collect `chunk.functionCalls` for `advance_phase`
+    - `streamChat` in `llmProvider.js` maps history to Gemini `user`/`model`, puts the system prompt in `systemInstruction`, streams text, collects `functionCalls` for `advance_phase`
+    - Each text delta → `onText` → `res.write` (assistant history stores text only)
 16. **Phase tool** — If `advance_phase` present and not wrapup, `nextPhase(session.phase)` (`prompts.js`). **Phase field on session is not used for this reply’s prompt** (already built).
 17. **Persist** — `persistTurn` in `interview.js`:
     - Push user message (`content`, `phase: phaseAtTurn`, optional `diagramSnapshot` if changed)
@@ -354,8 +358,9 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 | Interviewer personality / hard rules | `server/prompts.js` → `BASE_PERSONA` |
 | Phase goals / exit criteria | `server/prompts.js` → `PHASE_BLOCKS`, `toolsForPhase` |
 | When phase advances (tool schema) | `server/prompts.js` → `ADVANCE_PHASE_TOOL`; detection in `interviewEngine.js` |
-| Gemini model or API key | `server/config.js`, `server/.env` / `.env.example` (`GEMINI_*`) |
-| Streaming / abort / tool handling | `server/services/interviewEngine.js` |
+| Gemini model or API key | `server/config.js`, `server/.env` / `.env.example` (`GEMINI_*`); default `gemini-flash-latest` |
+| Streaming / abort / Gemini SDK | `server/services/llmProvider.js` |
+| Phase advance + turn assembly | `server/services/interviewEngine.js` |
 | Persist rules / guardrails | `server/routes/interview.js`, `server/lib/rateLimit.js`, `server/lib/diagram.js` |
 | Add a problem | `server/seed/problems.js` then `npm run seed`; schema in `models/Problem.js` |
 | Session fields / index | `server/models/Session.js` |

@@ -1,38 +1,30 @@
-import { GoogleGenAI } from '@google/genai';
-import { config } from '../config.js';
+import { streamChat } from './llmProvider.js';
 import {
   buildSystemPrompt,
   nextPhase,
   toolsForPhase,
 } from '../prompts.js';
 
-const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
-
-function toGeminiContents(messages) {
-  return messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-}
-
 /**
  * Transport-agnostic interview turn.
  * Streams text via onText(chunk). No Express / req / res here.
+ * Does not import any vendor LLM SDK.
  *
  * @param {object} params
- * @param {object} params.session - mongoose session doc (or lean) with messages + phase
- * @param {object} params.problem - problem brief
- * @param {string} params.userText - candidate message (may be empty on first turn)
- * @param {object} params.diagram - latest slim diagram
- * @param {(chunk: string) => void} params.onText - called for each text delta
+ * @param {object} params.session
+ * @param {object} params.problem
+ * @param {string} params.userText
+ * @param {object} [params.diagram] - legacy; prefer diagramPromptBlock
+ * @param {string} [params.diagramPromptBlock] - prebuilt diagram section for the system prompt
+ * @param {(chunk: string) => void} params.onText
  * @param {{ signal?: AbortSignal }} [params.options]
- * @returns {Promise<{ assistantText: string, phaseAdvanced: boolean, nextPhase: string|null, advanceReason: string|null, aborted?: boolean }>}
  */
 export async function runTurn({
   session,
   problem,
   userText,
   diagram,
+  diagramPromptBlock,
   onText,
   options = {},
 }) {
@@ -40,6 +32,7 @@ export async function runTurn({
     problem,
     phase: session.phase,
     diagram,
+    diagramPromptBlock,
   });
 
   const history = (session.messages || []).map((m) => ({
@@ -52,7 +45,6 @@ export async function runTurn({
   if (trimmed) {
     messages.push({ role: 'user', content: trimmed });
   } else if (messages.length === 0) {
-    // First turn: nudge the model to open the interview.
     messages.push({
       role: 'user',
       content:
@@ -63,58 +55,18 @@ export async function runTurn({
   }
 
   const tools = toolsForPhase(session.phase);
-  const contents = toGeminiContents(messages);
 
-  const stream = await ai.models.generateContentStream({
-    model: config.geminiModel,
-    contents,
-    config: {
-      systemInstruction: system,
-      maxOutputTokens: 1024,
-      ...(options.signal ? { abortSignal: options.signal } : {}),
-      ...(tools.length
-        ? { tools: [{ functionDeclarations: tools }] }
-        : {}),
-    },
+  const result = await streamChat({
+    systemInstruction: system,
+    messages,
+    tools,
+    onText,
+    signal: options.signal,
   });
 
-  let assistantText = '';
-  let aborted = false;
-  let functionCalls = [];
-
-  try {
-    for await (const chunk of stream) {
-      if (options.signal?.aborted) {
-        aborted = true;
-        break;
-      }
-
-      const text = chunk.text;
-      if (text) {
-        assistantText += text;
-        if (typeof onText === 'function') onText(text);
-      }
-
-      if (chunk.functionCalls?.length) {
-        functionCalls = chunk.functionCalls;
-      }
-    }
-  } catch (err) {
-    if (aborted || options.signal?.aborted || err?.name === 'AbortError') {
-      return {
-        assistantText,
-        phaseAdvanced: false,
-        nextPhase: null,
-        advanceReason: null,
-        aborted: true,
-      };
-    }
-    throw err;
-  }
-
-  if (aborted || options.signal?.aborted) {
+  if (result.aborted) {
     return {
-      assistantText,
+      assistantText: result.text,
       phaseAdvanced: false,
       nextPhase: null,
       advanceReason: null,
@@ -127,7 +79,9 @@ export async function runTurn({
   let advanceReason = null;
 
   if (session.phase !== 'wrapup') {
-    const toolUse = functionCalls.find((fc) => fc.name === 'advance_phase');
+    const toolUse = (result.functionCalls || []).find(
+      (fc) => fc.name === 'advance_phase'
+    );
     if (toolUse) {
       const nxt = nextPhase(session.phase);
       if (nxt) {
@@ -141,7 +95,7 @@ export async function runTurn({
   }
 
   return {
-    assistantText,
+    assistantText: result.text,
     phaseAdvanced,
     nextPhase: advancedTo,
     advanceReason,

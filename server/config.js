@@ -23,7 +23,7 @@ export const config = {
   port: Number(process.env.PORT) || 3001,
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   geminiApiKey: process.env.GEMINI_API_KEY,
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-flash-latest',
   mongodbUri: process.env.MONGODB_URI,
   clerkPublishableKey: process.env.CLERK_PUBLISHABLE_KEY,
   clerkSecretKey: process.env.CLERK_SECRET_KEY,

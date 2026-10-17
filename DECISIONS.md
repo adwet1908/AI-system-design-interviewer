@@ -4,10 +4,21 @@ Newest decisions at the top. Do not delete entries; mark them Superseded instead
 
 ---
 
+## D-017 — Isolate Gemini behind llmProvider.js; default model gemini-flash-latest
+
+- **Date:** 2026-10-17
+- **Status:** Active (refines D-016)
+- **What changed:** `server/services/llmProvider.js` (`streamChat`); `interviewEngine.js` no longer imports `@google/genai`; default `GEMINI_MODEL=gemini-flash-latest`; docs
+- **Why:** Switched LLM provider from Anthropic to Google Gemini (`gemini-flash-latest`) because an Anthropic API key was not available. One provider module keeps vendor details out of routes/engine.
+- **Alternatives considered:** Keep SDK calls inside `interviewEngine.js` (rejected: harder to swap providers). Pin a dated model id only (rejected for now; alias is convenient).
+- **Tradeoffs:** Alias `gemini-flash-latest` can change behavior over time as Google retargets it. Must re-test interviews after Google updates. Fail-fast still requires `GEMINI_API_KEY` at startup.
+
+---
+
 ## D-016 — Switch LLM provider from Anthropic to Google Gemini
 
 - **Date:** 2026-10-17
-- **Status:** Active (supersedes Anthropic-specific parts of D-001 / D-007 tooling details)
+- **Status:** Superseded by D-017 for model default and module boundary (provider choice remains Gemini)
 - **What changed:** `server/package.json` (`@google/genai` replaces `@anthropic-ai/sdk`); `server/config.js` (`GEMINI_API_KEY`, `GEMINI_MODEL`); `server/services/interviewEngine.js`; `server/prompts.js` (`ADVANCE_PHASE_TOOL` uses `parametersJsonSchema`); `server/.env.example`; `CONTEXT.md`
 - **Why:** Product owner requested Gemini models/keys instead of Anthropic. Keep the same `runTurn` contract so routes and UI stay unchanged.
 - **Alternatives considered:** Keep Anthropic (rejected by request). Use Vertex AI ADC instead of API key (rejected for MVP simplicity; AI Studio API key is enough).
