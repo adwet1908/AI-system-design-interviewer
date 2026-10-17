@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "seed": "node seed/seed.js"
+    "seed": "node seed/seed.js",
+    "test": "node --test services/**/*.test.js"
   },
   "dependencies": {
     "@clerk/express": "^1.7.0",
