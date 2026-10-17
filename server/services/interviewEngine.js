@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 import { config } from '../config.js';
 import {
   buildSystemPrompt,
@@ -6,7 +6,14 @@ import {
   toolsForPhase,
 } from '../prompts.js';
 
-const client = new Anthropic({ apiKey: config.anthropicApiKey });
+const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
+
+function toGeminiContents(messages) {
+  return messages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+}
 
 /**
  * Transport-agnostic interview turn.
@@ -19,7 +26,7 @@ const client = new Anthropic({ apiKey: config.anthropicApiKey });
  * @param {object} params.diagram - latest slim diagram
  * @param {(chunk: string) => void} params.onText - called for each text delta
  * @param {{ signal?: AbortSignal }} [params.options]
- * @returns {Promise<{ assistantText: string, phaseAdvanced: boolean, nextPhase: string|null, advanceReason: string|null }>}
+ * @returns {Promise<{ assistantText: string, phaseAdvanced: boolean, nextPhase: string|null, advanceReason: string|null, aborted?: boolean }>}
  */
 export async function runTurn({
   session,
@@ -56,43 +63,44 @@ export async function runTurn({
   }
 
   const tools = toolsForPhase(session.phase);
-  const stream = client.messages.stream(
-    {
-      model: config.anthropicModel,
-      max_tokens: 1024,
-      system,
-      messages,
-      ...(tools.length ? { tools } : {}),
+  const contents = toGeminiContents(messages);
+
+  const stream = await ai.models.generateContentStream({
+    model: config.geminiModel,
+    contents,
+    config: {
+      systemInstruction: system,
+      maxOutputTokens: 1024,
+      ...(options.signal ? { abortSignal: options.signal } : {}),
+      ...(tools.length
+        ? { tools: [{ functionDeclarations: tools }] }
+        : {}),
     },
-    options.signal ? { signal: options.signal } : undefined
-  );
+  });
 
   let assistantText = '';
   let aborted = false;
+  let functionCalls = [];
 
-  if (options.signal) {
-    const onAbort = () => {
-      aborted = true;
-      try {
-        stream.abort();
-      } catch {
-        // ignore
-      }
-    };
-    if (options.signal.aborted) onAbort();
-    else options.signal.addEventListener('abort', onAbort, { once: true });
-  }
-
-  stream.on('text', (delta) => {
-    assistantText += delta;
-    if (typeof onText === 'function') onText(delta);
-  });
-
-  let finalMessage;
   try {
-    finalMessage = await stream.finalMessage();
+    for await (const chunk of stream) {
+      if (options.signal?.aborted) {
+        aborted = true;
+        break;
+      }
+
+      const text = chunk.text;
+      if (text) {
+        assistantText += text;
+        if (typeof onText === 'function') onText(text);
+      }
+
+      if (chunk.functionCalls?.length) {
+        functionCalls = chunk.functionCalls;
+      }
+    }
   } catch (err) {
-    if (aborted || options.signal?.aborted) {
+    if (aborted || options.signal?.aborted || err?.name === 'AbortError') {
       return {
         assistantText,
         phaseAdvanced: false,
@@ -104,31 +112,30 @@ export async function runTurn({
     throw err;
   }
 
-  // Prefer accumulated stream text; fall back to final message text blocks.
-  if (!assistantText && finalMessage?.content) {
-    assistantText = finalMessage.content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
+  if (aborted || options.signal?.aborted) {
+    return {
+      assistantText,
+      phaseAdvanced: false,
+      nextPhase: null,
+      advanceReason: null,
+      aborted: true,
+    };
   }
 
   let phaseAdvanced = false;
   let advancedTo = null;
   let advanceReason = null;
 
-  if (finalMessage?.content && session.phase !== 'wrapup') {
-    const toolUse = finalMessage.content.find(
-      (b) => b.type === 'tool_use' && b.name === 'advance_phase'
-    );
+  if (session.phase !== 'wrapup') {
+    const toolUse = functionCalls.find((fc) => fc.name === 'advance_phase');
     if (toolUse) {
       const nxt = nextPhase(session.phase);
       if (nxt) {
         phaseAdvanced = true;
         advancedTo = nxt;
+        const args = toolUse.args || {};
         advanceReason =
-          typeof toolUse.input?.reason === 'string'
-            ? toolUse.input.reason
-            : 'exit criteria met';
+          typeof args.reason === 'string' ? args.reason : 'exit criteria met';
       }
     }
   }

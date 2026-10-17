@@ -91,11 +91,12 @@ const PHASE_BLOCKS = {
   },
 };
 
+/** Gemini function declaration for phase advances. */
 export const ADVANCE_PHASE_TOOL = {
   name: 'advance_phase',
   description:
     'Call this ONLY after you have written your spoken reply, and ONLY when the current phase exit criteria are plausibly met. Advances the interview to the next phase for the NEXT turn.',
-  input_schema: {
+  parametersJsonSchema: {
     type: 'object',
     properties: {
       reason: {
