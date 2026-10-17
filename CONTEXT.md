@@ -131,7 +131,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 6. React Flow canvas + diagram JSON in the prompt
 7. Evaluator, more problems, session history, deploy
 
-Currently at: Milestone 3 done (interview engine + session/interview API). Milestone 4 next.
+Currently at: Milestones 1–4 complete (scaffold, seed, interview API, plain chat UI). Next: prompt tuning, React Flow canvas, evaluator.
 
 ## Out of scope for the MVP
 

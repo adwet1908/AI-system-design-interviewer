@@ -20,3 +20,17 @@ export async function apiFetch(path, { token, ...options } = {}) {
 
   return res;
 }
+
+export async function apiJson(path, { token, ...options } = {}) {
+  const res = await apiFetch(path, { token, ...options });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+export { API_URL };
