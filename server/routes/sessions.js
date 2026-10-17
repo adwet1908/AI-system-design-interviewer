@@ -3,7 +3,10 @@ import { Session } from '../models/Session.js';
 import { Problem } from '../models/Problem.js';
 import { getUserId } from '../middleware/requireAuth.js';
 import { evaluateSession } from '../services/evaluator.js';
-import { slimDiagram } from '../lib/diagram.js';
+import {
+  buildDiagramContext,
+  DiagramValidationError,
+} from '../services/diagramSerializer.js';
 
 const router = Router();
 
@@ -103,6 +106,45 @@ router.get('/sessions/:id', async (req, res) => {
   }
 });
 
+router.patch('/sessions/:id/diagram', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const session = await Session.findOne({
+      _id: req.params.id,
+      userId,
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    if (session.status !== 'active') {
+      return res.status(400).json({ error: 'Session is not active' });
+    }
+
+    try {
+      const ctx = buildDiagramContext(req.body?.diagram ?? { nodes: [], edges: [] }, null);
+      session.diagram = ctx.persistedDiagram;
+      await session.save();
+      return res.json({
+        session: {
+          _id: session._id,
+          diagram: session.diagram,
+          updatedAt: session.updatedAt,
+        },
+      });
+    } catch (err) {
+      if (err instanceof DiagramValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+  } catch (err) {
+    console.error('Patch diagram failed:', err);
+    res.status(500).json({ error: 'Failed to save diagram' });
+  }
+});
+
 router.post('/sessions/:id/end', async (req, res) => {
   try {
     const userId = getUserId(req);
@@ -125,7 +167,15 @@ router.post('/sessions/:id/end', async (req, res) => {
     session.status = 'completed';
     session.evaluation = evaluation;
     if (req.body?.diagram) {
-      session.diagram = slimDiagram(req.body.diagram);
+      try {
+        const ctx = buildDiagramContext(req.body.diagram, null);
+        session.diagram = ctx.persistedDiagram;
+      } catch (err) {
+        if (err instanceof DiagramValidationError) {
+          return res.status(400).json({ error: err.message });
+        }
+        throw err;
+      }
     }
     await session.save();
 

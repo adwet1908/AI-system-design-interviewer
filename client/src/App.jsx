@@ -38,7 +38,9 @@ function InterviewApp() {
   const [streamingText, setStreamingText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState(null);
+  const [saveStatus, setSaveStatus] = useState('');
   const abortRef = useRef(null);
+  const diagramRef = useRef({ nodes: [], edges: [] });
 
   const withToken = useCallback(async () => getToken(), [getToken]);
 
@@ -75,8 +77,10 @@ function InterviewApp() {
     const data = await apiJson(`/api/sessions/${id}`, { token });
     setSession(data.session);
     setProblem(data.problem);
+    diagramRef.current = data.session?.diagram || { nodes: [], edges: [] };
     setView('interview');
     setStreamingText('');
+    setSaveStatus('');
   }
 
   async function handlePickProblem(slug) {
@@ -91,7 +95,9 @@ function InterviewApp() {
       });
       setSession(data.session);
       setProblem(data.problem);
+      diagramRef.current = data.session?.diagram || { nodes: [], edges: [] };
       setView('interview');
+      setSaveStatus('');
       await refreshSessions();
     } catch (err) {
       setError(err.message);
@@ -116,7 +122,7 @@ function InterviewApp() {
         method: 'POST',
         body: JSON.stringify({
           message,
-          diagram: session.diagram || { nodes: [], edges: [] },
+          diagram: diagramRef.current || session.diagram || { nodes: [], edges: [] },
         }),
         signal: controller.signal,
       });
@@ -171,7 +177,7 @@ function InterviewApp() {
         token,
         method: 'POST',
         body: JSON.stringify({
-          diagram: session.diagram || { nodes: [], edges: [] },
+          diagram: diagramRef.current || session.diagram || { nodes: [], edges: [] },
         }),
       });
       setSession(data.session);
@@ -192,6 +198,7 @@ function InterviewApp() {
           setSession(null);
           setProblem(null);
           setError(null);
+          setSaveStatus('');
         }}
         onSelectSession={(id) => loadSession(id).catch((e) => setError(e.message))}
       />
@@ -222,7 +229,17 @@ function InterviewApp() {
               onEnd={handleEnd}
             />
             <div className="hidden w-[42%] min-w-[280px] md:block">
-              <Canvas />
+              <Canvas
+                sessionId={session?._id}
+                diagram={session?.diagram || { nodes: [], edges: [] }}
+                getToken={withToken}
+                saveStatus={saveStatus}
+                setSaveStatus={setSaveStatus}
+                onDiagramSaved={(d) => {
+                  diagramRef.current = d;
+                  setSession((s) => (s ? { ...s, diagram: d } : s));
+                }}
+              />
             </div>
           </>
         )}
