@@ -148,7 +148,14 @@ Curveballs (prefer scale phase; at most one unless they are excelling):
 ${problem.curveballs.map((x, i) => `${i + 1}. ${x}`).join('\n')}`;
 }
 
-export function buildDiagramBlock(diagram) {
+/**
+ * Diagram section only. Prefer prebuilt diagramPromptBlock from diagramSerializer.
+ * Other prompt text in this file stays unchanged.
+ */
+export function buildDiagramBlock(diagram, diagramPromptBlock) {
+  if (typeof diagramPromptBlock === 'string' && diagramPromptBlock.trim()) {
+    return diagramPromptBlock;
+  }
   const nodes = diagram?.nodes || [];
   const edges = diagram?.edges || [];
   if (!nodes.length && !edges.length) {
@@ -159,12 +166,17 @@ export function buildDiagramBlock(diagram) {
 ${JSON.stringify({ nodes, edges }, null, 2)}`;
 }
 
-export function buildSystemPrompt({ problem, phase, diagram }) {
+export function buildSystemPrompt({
+  problem,
+  phase,
+  diagram,
+  diagramPromptBlock,
+}) {
   return [
     BASE_PERSONA,
     buildBriefBlock(problem),
     buildPhaseBlock(phase),
-    buildDiagramBlock(diagram),
+    buildDiagramBlock(diagram, diagramPromptBlock),
   ].join('\n\n');
 }
 

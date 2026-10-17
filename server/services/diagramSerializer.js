@@ -537,11 +537,28 @@ export function buildDiagramContext(rawDiagram, previousSnapshot = null) {
     diffText,
   });
 
+  const persistedDiagram = {
+    nodes: sanitized.nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      position: n.position || { x: 0, y: 0 },
+      data: { label: n.label, note: n.note || '' },
+    })),
+    edges: sanitized.edges.map((e, i) => ({
+      id: `e-${e.from}-${e.to}-${i}`,
+      source: e.from,
+      target: e.to,
+      label: e.label || '',
+      data: { label: e.label || '' },
+    })),
+  };
+
   return {
     slimJson,
     summaryText,
     observationsText,
     diffText,
     promptBlock,
+    persistedDiagram,
   };
 }

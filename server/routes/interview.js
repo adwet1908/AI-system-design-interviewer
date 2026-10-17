@@ -4,10 +4,10 @@ import { Problem } from '../models/Problem.js';
 import { getUserId } from '../middleware/requireAuth.js';
 import { runTurn } from '../services/interviewEngine.js';
 import {
-  diagramsEqual,
-  lastDiagramSnapshot,
-  slimDiagram,
-} from '../lib/diagram.js';
+  buildDiagramContext,
+  DiagramValidationError,
+} from '../services/diagramSerializer.js';
+import { diagramsEqual, lastDiagramSnapshot } from '../lib/diagram.js';
 import { rateLimit } from '../lib/rateLimit.js';
 
 const router = Router();
@@ -20,7 +20,8 @@ const RATE_WINDOW_MS = 60_000;
 async function persistTurn({
   session,
   message,
-  diagram,
+  persistedDiagram,
+  slimJson,
   phaseAtTurn,
   assistantText,
   phaseAdvanced,
@@ -35,8 +36,8 @@ async function persistTurn({
   };
 
   const prevSnap = lastDiagramSnapshot(session.messages);
-  if (!prevSnap || !diagramsEqual(prevSnap, diagram)) {
-    userMsg.diagramSnapshot = diagram;
+  if (!prevSnap || !diagramsEqual(prevSnap, slimJson)) {
+    userMsg.diagramSnapshot = slimJson;
   }
 
   session.messages.push(userMsg);
@@ -55,11 +56,10 @@ async function persistTurn({
         advanceReason ? `: ${advanceReason}` : ''
       }`,
     };
-    // Applies on the next turn's system prompt.
     session.phase = nextPhaseName;
   }
 
-  session.diagram = diagram;
+  session.diagram = persistedDiagram;
   session.messages.push(assistantMsg);
   await session.save();
 }
@@ -127,7 +127,21 @@ router.post('/sessions/:id/interview', async (req, res) => {
     return res.status(404).json({ error: 'Problem not found for session' });
   }
 
-  const diagram = slimDiagram(req.body?.diagram ?? session.diagram);
+  let diagramContext;
+  try {
+    const previousSnapshot = lastDiagramSnapshot(session.messages);
+    diagramContext = buildDiagramContext(
+      req.body?.diagram ?? session.diagram,
+      previousSnapshot
+    );
+  } catch (err) {
+    if (err instanceof DiagramValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
+    throw err;
+  }
+
+  const { slimJson, promptBlock, persistedDiagram } = diagramContext;
   const phaseAtTurn = session.phase;
 
   const abortController = new AbortController();
@@ -148,7 +162,7 @@ router.post('/sessions/:id/interview', async (req, res) => {
       session: session.toObject(),
       problem,
       userText: message,
-      diagram,
+      diagramPromptBlock: promptBlock,
       onText: (chunk) => {
         startedStreaming = true;
         streamedText += chunk;
@@ -168,7 +182,8 @@ router.post('/sessions/:id/interview', async (req, res) => {
     await persistTurn({
       session,
       message,
-      diagram,
+      persistedDiagram,
+      slimJson,
       phaseAtTurn,
       assistantText,
       phaseAdvanced: Boolean(result.phaseAdvanced) && !result.aborted,
@@ -185,7 +200,8 @@ router.post('/sessions/:id/interview', async (req, res) => {
         await persistTurn({
           session,
           message,
-          diagram,
+          persistedDiagram,
+          slimJson,
           phaseAtTurn,
           assistantText: streamedText,
           phaseAdvanced: false,
