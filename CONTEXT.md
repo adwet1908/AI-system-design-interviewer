@@ -131,7 +131,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 6. React Flow canvas + diagram JSON in the prompt
 7. Evaluator, more problems, session history, deploy
 
-Currently at: Milestone 2 done (Session/Problem models + idempotent seed). Milestones 3–4 next.
+Currently at: Milestone 3 done (interview engine + session/interview API). Milestone 4 next.
 
 ## Out of scope for the MVP
 

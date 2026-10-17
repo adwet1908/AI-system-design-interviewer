@@ -15,29 +15,12 @@ const messageSchema = new mongoose.Schema(
     content: { type: String, required: true },
     phase: { type: String, enum: PHASES, required: true },
     diagramSnapshot: {
-      type: {
-        nodes: [
-          {
-            id: { type: String },
-            type: { type: String },
-            label: { type: String },
-          },
-        ],
-        edges: [
-          {
-            source: { type: String },
-            target: { type: String },
-          },
-        ],
-      },
-      default: undefined,
+      type: mongoose.Schema.Types.Mixed,
+      required: false,
     },
     event: {
-      type: {
-        type: { type: String, enum: ['phase_advanced', 'curveball'] },
-        detail: { type: String },
-      },
-      default: undefined,
+      type: mongoose.Schema.Types.Mixed,
+      required: false,
     },
     at: { type: Date, default: Date.now },
   },
