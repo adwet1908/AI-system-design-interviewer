@@ -197,11 +197,6 @@ router.post('/sessions/:id/end', async (req, res) => {
       return res.json({ session });
     }
 
-    const problem = await Problem.findOne({ slug: session.problemSlug }).lean();
-    const evaluation = await evaluateSession(session, problem);
-
-    session.status = 'completed';
-    session.evaluation = evaluation;
     if (req.body?.diagram) {
       try {
         const ctx = buildDiagramContext(req.body.diagram, null);
@@ -213,6 +208,12 @@ router.post('/sessions/:id/end', async (req, res) => {
         throw err;
       }
     }
+
+    const problem = await Problem.findOne({ slug: session.problemSlug }).lean();
+    const evaluation = await evaluateSession(session, problem);
+
+    session.status = 'completed';
+    session.evaluation = evaluation;
     await session.save();
 
     res.json({ session });

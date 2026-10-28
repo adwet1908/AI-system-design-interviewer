@@ -7,8 +7,8 @@ export default function Palette({ onAdd }) {
   }
 
   return (
-    <div className="flex w-40 shrink-0 flex-col border-r border-slate-200 bg-slate-50">
-      <p className="border-b border-slate-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+    <div className="flex w-40 shrink-0 flex-col border-r border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+      <p className="border-b border-slate-200 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:text-slate-400">
         Components
       </p>
       <ul className="flex-1 space-y-1 overflow-y-auto p-1.5">
@@ -19,7 +19,7 @@ export default function Palette({ onAdd }) {
               draggable
               onDragStart={(e) => onDragStart(e, type)}
               onClick={() => onAdd(type)}
-              className="flex w-full items-center gap-1.5 rounded border border-slate-200 bg-white px-1.5 py-1 text-left text-[11px] text-slate-700 hover:border-slate-400"
+              className="flex w-full items-center gap-1.5 rounded border border-slate-200 bg-white px-1.5 py-1 text-left text-[11px] text-slate-700 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-500"
               title="Click or drag onto canvas"
             >
               <span

@@ -26,12 +26,12 @@ function ArchitectureNode({ id, data, selected }) {
 
   return (
     <div
-      className={`min-w-[140px] max-w-[200px] rounded-md border-2 bg-white px-2 py-1.5 shadow-sm ${
-        selected ? 'ring-2 ring-slate-400' : ''
+      className={`min-w-[140px] max-w-[200px] rounded-md border-2 bg-white px-2 py-1.5 shadow-sm dark:bg-slate-800 dark:shadow-none ${
+        selected ? 'ring-2 ring-slate-400 dark:ring-slate-500' : ''
       }`}
       style={{ borderColor: cfg.color }}
     >
-      <Handle type="target" position={Position.Left} className="!bg-slate-500" />
+      <Handle type="target" position={Position.Left} className="!bg-slate-500 dark:!bg-slate-400" />
       <div className="flex items-center gap-1.5">
         <span
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded"
@@ -40,13 +40,13 @@ function ArchitectureNode({ id, data, selected }) {
           <Icon size={14} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+          <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
             {cfg.label}
           </div>
           {editing === 'label' ? (
             <input
               autoFocus
-              className="w-full rounded border border-slate-300 px-1 text-xs"
+              className="w-full rounded border border-slate-300 px-1 text-xs text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onBlur={commit}
@@ -57,7 +57,7 @@ function ArchitectureNode({ id, data, selected }) {
             />
           ) : (
             <div
-              className="cursor-text truncate text-xs font-semibold text-slate-800"
+              className="cursor-text truncate text-xs font-semibold text-slate-800 dark:text-slate-100"
               onDoubleClick={() => startEdit('label')}
               title="Double-click to edit label"
             >
@@ -69,7 +69,7 @@ function ArchitectureNode({ id, data, selected }) {
       {editing === 'note' ? (
         <input
           autoFocus
-          className="mt-1 w-full rounded border border-slate-300 px-1 text-[10px]"
+          className="mt-1 w-full rounded border border-slate-300 px-1 text-[10px] text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -80,14 +80,14 @@ function ArchitectureNode({ id, data, selected }) {
         />
       ) : (
         <div
-          className="mt-0.5 cursor-text truncate text-[10px] text-slate-500"
+          className="mt-0.5 cursor-text truncate text-[10px] text-slate-500 dark:text-slate-400"
           onDoubleClick={() => startEdit('note')}
           title="Double-click to edit note"
         >
           {data.note || 'Add note…'}
         </div>
       )}
-      <Handle type="source" position={Position.Right} className="!bg-slate-500" />
+      <Handle type="source" position={Position.Right} className="!bg-slate-500 dark:!bg-slate-400" />
     </div>
   );
 }

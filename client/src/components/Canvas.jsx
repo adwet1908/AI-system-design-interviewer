@@ -261,25 +261,25 @@ function CanvasInner({
           : '';
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-2 py-1.5">
-        <span className="text-xs font-medium text-slate-700">Architecture</span>
+    <div className="flex h-full min-h-0 flex-col bg-white dark:bg-slate-900">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-2 py-1.5 dark:border-slate-700">
+        <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Architecture</span>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-slate-400">{statusLabel}</span>
+          <span className="text-[10px] text-slate-400 dark:text-slate-500">{statusLabel}</span>
           <button
             type="button"
             onClick={clearCanvas}
-            className="rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50"
+            className="rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             Clear
           </button>
         </div>
       </div>
       {selectedEdgeId && (
-        <div className="flex items-center gap-1 border-b border-slate-100 px-2 py-1">
-          <span className="text-[10px] text-slate-500">Edge label</span>
+        <div className="flex items-center gap-1 border-b border-slate-100 px-2 py-1 dark:border-slate-700">
+          <span className="text-[10px] text-slate-500 dark:text-slate-400">Edge label</span>
           <input
-            className="flex-1 rounded border border-slate-300 px-1 text-[11px]"
+            className="flex-1 rounded border border-slate-300 px-1 text-[11px] text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
             value={edgeLabelDraft}
             onChange={(e) => setEdgeLabelDraft(e.target.value)}
             onBlur={applyEdgeLabel}
@@ -314,7 +314,7 @@ function CanvasInner({
           >
             <Background gap={16} />
             <Controls />
-            <MiniMap pannable zoomable className="!bg-slate-50" />
+            <MiniMap pannable zoomable className="!bg-slate-50 dark:!bg-slate-800" />
           </ReactFlow>
         </div>
       </div>
@@ -325,14 +325,14 @@ function CanvasInner({
 export default function Canvas(props) {
   if (!props.sessionId) {
     return (
-      <div className="flex h-full items-center justify-center border-l border-slate-200 bg-slate-50 text-sm text-slate-500">
+      <div className="flex h-full items-center justify-center border-l border-slate-200 bg-slate-50 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
         Open a session to draw
       </div>
     );
   }
 
   return (
-    <div className="h-full border-l border-slate-200">
+    <div className="h-full border-l border-slate-200 dark:border-slate-700">
       <ReactFlowProvider>
         <CanvasInner key={props.sessionId} {...props} />
       </ReactFlowProvider>

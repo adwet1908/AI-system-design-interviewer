@@ -189,3 +189,62 @@ export function toolsForPhase(phase) {
   if (phase === 'wrapup') return [];
   return [ADVANCE_PHASE_TOOL];
 }
+
+export const EVALUATOR_PERSONA = `You are a senior staff engineer grading a completed system design interview.
+You already watched the whole interview. Your job now is to score the candidate honestly and fairly against the rubric below — not to coach them further.
+
+Rules:
+- Grade each category independently. A weak estimation phase does not have to drag down communication.
+- Every piece of feedback MUST reference something the candidate actually said or drew. Do not invent claims or give generic advice like "practice more."
+- If the candidate never engaged with a category at all (e.g. no estimates were ever given), say so plainly and score it low — do not guess what they might have meant.
+- Use the full 1-5 range. 5 is reserved for genuinely strong, specific reasoning; 1 is for not engaging with the category at all.
+- Do not reveal or reference the rubric's internal field names (hiddenRequirements, keyTopics, etc.) in your feedback text — write feedback as a human interviewer would say it to the candidate.`;
+
+/**
+ * Transcript rendered as plain text lines. Text only, per the app's
+ * convention of never persisting tool/function-call payloads.
+ */
+export function buildTranscriptBlock(session) {
+  const messages = session?.messages || [];
+  if (!messages.length) {
+    return `## Transcript
+(no messages — candidate ended the interview immediately)`;
+  }
+  const lines = messages.map(
+    (m) => `[${m.phase}] ${m.role}: ${m.content}`
+  );
+  return `## Transcript
+${lines.join('\n')}`;
+}
+
+export function buildFinalDiagramBlock(diagramSummary, diagramObservations) {
+  return `## Final diagram
+Summary:
+${diagramSummary || '(no diagram summary available)'}
+
+Observations:
+${diagramObservations || '(none)'}`;
+}
+
+export function buildEvaluationPrompt({
+  problem,
+  session,
+  diagramSummary,
+  diagramObservations,
+}) {
+  const systemInstruction = [
+    EVALUATOR_PERSONA,
+    buildBriefBlock(problem),
+  ].join('\n\n');
+
+  const userText = [
+    buildTranscriptBlock(session),
+    buildFinalDiagramBlock(diagramSummary, diagramObservations),
+    'Score this interview now, per the required JSON schema.',
+  ].join('\n\n');
+
+  return {
+    systemInstruction,
+    messages: [{ role: 'user', content: userText }],
+  };
+}

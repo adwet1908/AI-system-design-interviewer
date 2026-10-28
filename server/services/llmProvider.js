@@ -83,6 +83,41 @@ export async function streamChat({
   return { text, functionCalls, aborted: false };
 }
 
+/**
+ * Single one-shot structured-output entry point for the app.
+ * Vendor SDK stays in this module only. Returns the raw JSON text;
+ * callers parse/validate it (parsing is domain logic, not vendor logic).
+ *
+ * @param {object} params
+ * @param {string} params.systemInstruction
+ * @param {{ role: string, content: string }[]} params.messages
+ * @param {object} params.responseSchema - Gemini response JSON schema
+ * @param {AbortSignal} [params.signal]
+ * @returns {Promise<string>} raw JSON text
+ */
+export async function generateJson({
+  systemInstruction,
+  messages,
+  responseSchema,
+  signal,
+}) {
+  const contents = toProviderContents(messages);
+
+  const response = await ai.models.generateContent({
+    model: config.geminiModel,
+    contents,
+    config: {
+      systemInstruction,
+      responseMimeType: 'application/json',
+      responseSchema,
+      maxOutputTokens: 2048,
+      ...(signal ? { abortSignal: signal } : {}),
+    },
+  });
+
+  return response.text;
+}
+
 export function getLlmModelName() {
   return config.geminiModel;
 }

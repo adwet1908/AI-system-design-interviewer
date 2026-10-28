@@ -1,6 +1,8 @@
 import { Show, SignInButton, UserButton, useAuth } from '@clerk/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Moon, Sun } from 'lucide-react';
 import { apiFetch, apiJson } from './lib/api.js';
+import { useTheme } from './lib/theme.js';
 import Sidebar from './components/Sidebar.jsx';
 import Chat from './components/Chat.jsx';
 import Canvas from './components/Canvas.jsx';
@@ -12,20 +14,37 @@ const isDev = import.meta.env.DEV;
 function Landing() {
   return (
     <main className="mx-auto max-w-xl px-6 py-16">
-      <h2 className="mb-3 text-2xl font-semibold">Practice system design interviews</h2>
-      <p className="mb-6 text-slate-600">
+      <h2 className="mb-3 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+        Practice system design interviews
+      </h2>
+      <p className="mb-6 text-slate-600 dark:text-slate-400">
         Chat with an AI interviewer that walks through requirements, estimation,
         architecture, and scale — using private problem briefs.
       </p>
       <SignInButton mode="modal">
         <button
           type="button"
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300"
         >
           Sign in
         </button>
       </SignInButton>
     </main>
+  );
+}
+
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label="Toggle dark mode"
+      title="Toggle dark mode"
+      className="rounded-md p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+    >
+      {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
   );
 }
 
@@ -209,9 +228,9 @@ function InterviewApp() {
 
       <div className="flex min-w-0 flex-1">
         {view === 'picker' ? (
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto bg-white dark:bg-slate-900">
             {error && (
-              <p className="px-6 pt-4 text-sm text-red-600">{error}</p>
+              <p className="px-6 pt-4 text-sm text-red-600 dark:text-red-400">{error}</p>
             )}
             <ProblemPicker
               problems={problems}
@@ -263,14 +282,17 @@ function InterviewApp() {
 
 export default function App() {
   return (
-    <div className="min-h-screen">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-        <h1 className="text-lg font-semibold tracking-tight">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
+      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3 dark:border-slate-700 dark:bg-slate-900">
+        <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
           System Design Interviewer
         </h1>
-        <Show when="signed-in">
-          <UserButton />
-        </Show>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Show when="signed-in">
+            <UserButton />
+          </Show>
+        </div>
       </header>
 
       <Show when="signed-out">

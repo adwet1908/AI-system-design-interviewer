@@ -1,6 +1,6 @@
 # System flow map
 
-**Last verified against commit `8a54f7e` (+ Part D docs commit).**  
+**Last verified against commit `f801f94`.**  
 Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (product rules).
 
 ---

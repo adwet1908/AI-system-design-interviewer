@@ -4,6 +4,17 @@ Newest decisions at the top. Do not delete entries; mark them Superseded instead
 
 ---
 
+## D-022 — Tighten interviewer conversational style; add dev diagram debug panel
+
+- **Date:** 2026-10-28
+- **Status:** Active
+- **What changed:** `server/prompts.js` `BASE_PERSONA` rules (one question per reply, no numbered/bulleted lists, 1-3 plain sentences, nudge instead of listing requirements topics in `requirements` phase, get more direct after two vague replies, never reveal exit criteria or phase names); `GET /api/sessions/:id/diagram-context` route (dev-only, 404 in production); `client/src/components/DiagramDebugPanel.jsx`; `client/src/App.jsx` wires the panel next to `Canvas` behind `import.meta.env.DEV`
+- **Why:** Mock interviews surfaced the model asking multi-part/listy questions and reciting the requirements checklist, which reads as scripted rather than like a real interviewer. The debug panel lets a developer see exactly what diagram context the LLM receives, to tune prompts against ground truth instead of guessing.
+- **Alternatives considered:** Leave formatting unconstrained and rely on few-shot examples alone (rejected: didn't reliably stop list formatting). Log diagram context to server console only (rejected: slower feedback loop than an in-browser panel).
+- **Tradeoffs:** More prompt rules to maintain and re-verify after model updates. Debug panel adds a route that must stay disabled in production (`NODE_ENV` check) so the private diagram context never leaks to real users.
+
+---
+
 ## D-021 — Debounced canvas autosave via PATCH diagram
 
 - **Date:** 2026-10-17

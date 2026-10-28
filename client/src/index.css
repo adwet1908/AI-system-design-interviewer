@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* Toggle-driven dark mode: <html data-theme="dark">, not just OS preference. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -7,4 +10,32 @@ body {
     Arial, sans-serif;
   background: #f8fafc;
   color: #0f172a;
+}
+
+[data-theme='dark'] body {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+/* React Flow ships its own theme via CSS variables; override for dark mode. */
+[data-theme='dark'] .react-flow {
+  --xy-background-color: #0f172a;
+  --xy-background-pattern-dots-color: #334155;
+  --xy-node-background-color: #1e293b;
+  --xy-node-border-default: 1px solid #334155;
+  --xy-node-color: #e2e8f0;
+  --xy-node-boxshadow-default: none;
+  --xy-edge-stroke-default: #64748b;
+  --xy-edge-stroke-width-default: 1.5;
+  --xy-edge-label-background-color-default: #1e293b;
+  --xy-edge-label-color-default: #e2e8f0;
+  --xy-handle-background-color-default: #64748b;
+  --xy-minimap-background-color-props: #1e293b;
+  --xy-minimap-mask-background-color-props: rgba(15, 23, 42, 0.6);
+  --xy-minimap-node-background-color-props: #334155;
+  --xy-controls-button-background-color: #1e293b;
+  --xy-controls-button-background-color-hover: #334155;
+  --xy-controls-button-color: #e2e8f0;
+  --xy-controls-button-color-hover: #f8fafc;
+  --xy-controls-button-border-color: #334155;
 }
