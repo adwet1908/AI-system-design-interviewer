@@ -96,8 +96,8 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 
 - React Flow with **typed custom nodes**: loadBalancer, apiServer, cache, database, queue, cdn, etc. Not freehand drawing. The LLM must be able to read it.
 - Nodes have editable labels (e.g. "Redis, TTL 1h").
-- Before sending to the backend, export a **slim JSON**: `{ nodes: [{ id, type, label }], edges: [{ source, target }] }`. Strip positions and styling.
-- Only save a `diagramSnapshot` on a message when the diagram changed (deep-equal check against the last snapshot).
+- Client sends React Flow nodes/edges; **server** `diagramSerializer.js` validates and builds slim JSON `{ nodes: [{ id, type, label, note }], edges: [{ from, to, label }] }`, plus summary/observations/diff for the prompt.
+- Only save a `diagramSnapshot` (slim) on a message when the diagram changed (deep-equal check against the last snapshot). Full canvas with positions lives on `session.diagram`.
 
 ## Implementation rules and gotchas
 
@@ -144,7 +144,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 6. React Flow canvas + diagram JSON in the prompt
 7. Evaluator, more problems, session history, deploy
 
-Currently at: Milestones 1–4 complete; LLM isolated in `llmProvider.js` (Gemini `gemini-flash-latest`). Next: React Flow canvas, evaluator.
+Currently at: Milestone 6 complete — React Flow canvas + server diagram serializer wired into the interviewer. Next: prompt tuning, evaluator, deploy.
 
 ## Out of scope for the MVP
 

@@ -36,7 +36,12 @@ Diagram:
 Tools:
 - When the CURRENT phase exit criteria are plausibly met, FIRST write your spoken reply to the candidate, THEN call the advance_phase tool.
 - Do not call advance_phase in wrapup. Do not call it just because time passed or the candidate said "next".
-- Never mention the tool, phases by internal name, or "I'm advancing the phase" to the candidate.`;
+- Never mention the tool, phases by internal name, or "I'm advancing the phase" to the candidate.
+
+1. Never ask more than one question per reply. Never use numbered or bulleted lists in replies. Write 1 to 3 plain sentences like a person talking.
+2. In the Requirements phase, the candidate asks the clarifying questions and you answer them from the private brief. If the candidate hasn't asked anything useful, do not ask them to state scale or requirements for you. Instead nudge with one open question such as "What would you want to pin down before we design anything?" Never list the topics they should cover.
+3. If the candidate gives a vague or lazy reply twice in a row, stay in role but get slightly more direct: say what is missing in one sentence, without naming the checklist.
+4. Never reveal the exit criteria or the names of the phases.`;
 
 const PHASE_BLOCKS = {
   requirements: {

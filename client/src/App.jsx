@@ -4,7 +4,10 @@ import { apiFetch, apiJson } from './lib/api.js';
 import Sidebar from './components/Sidebar.jsx';
 import Chat from './components/Chat.jsx';
 import Canvas from './components/Canvas.jsx';
+import DiagramDebugPanel from './components/DiagramDebugPanel.jsx';
 import ProblemPicker from './components/ProblemPicker.jsx';
+
+const isDev = import.meta.env.DEV;
 
 function Landing() {
   return (
@@ -39,6 +42,7 @@ function InterviewApp() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState(null);
   const [saveStatus, setSaveStatus] = useState('');
+  const [diagramRefreshKey, setDiagramRefreshKey] = useState(0);
   const abortRef = useRef(null);
   const diagramRef = useRef({ nodes: [], edges: [] });
 
@@ -228,17 +232,26 @@ function InterviewApp() {
               onStop={handleStop}
               onEnd={handleEnd}
             />
-            <div className="hidden w-[42%] min-w-[280px] md:block">
-              <Canvas
+            <div className="hidden w-[42%] min-w-[280px] flex-col md:flex">
+              <div className="min-h-0 flex-1">
+                <Canvas
+                  sessionId={session?._id}
+                  diagram={session?.diagram || { nodes: [], edges: [] }}
+                  getToken={withToken}
+                  saveStatus={saveStatus}
+                  setSaveStatus={setSaveStatus}
+                  onDiagramSaved={(d) => {
+                    diagramRef.current = d;
+                    setSession((s) => (s ? { ...s, diagram: d } : s));
+                    setDiagramRefreshKey((k) => k + 1);
+                  }}
+                />
+              </div>
+              <DiagramDebugPanel
+                enabled={isDev}
                 sessionId={session?._id}
-                diagram={session?.diagram || { nodes: [], edges: [] }}
                 getToken={withToken}
-                saveStatus={saveStatus}
-                setSaveStatus={setSaveStatus}
-                onDiagramSaved={(d) => {
-                  diagramRef.current = d;
-                  setSession((s) => (s ? { ...s, diagram: d } : s));
-                }}
+                refreshKey={diagramRefreshKey}
               />
             </div>
           </>

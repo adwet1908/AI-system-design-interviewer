@@ -1,6 +1,6 @@
 # System flow map
 
-**Last verified against commit (see git log: llmProvider / gemini-flash-latest).**  
+**Last verified against commit `8a54f7e` (+ Part D docs commit).**  
 Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (product rules).
 
 ---
@@ -17,7 +17,9 @@ Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (p
 | `client/src/main.jsx` | ClerkProvider bootstrap |
 | `client/src/App.jsx` | Landing, session list, interview orchestration, streaming |
 | `client/src/components/Chat.jsx` | Chat UI, phase badge, start/stop/end |
-| `client/src/components/Canvas.jsx` | Placeholder panel (“Canvas coming soon”) |
+| `client/src/components/Canvas.jsx` | React Flow canvas, palette, debounced autosave |
+| `client/src/components/canvas/*` | Typed nodes, palette, node config |
+| `client/src/components/DiagramDebugPanel.jsx` | Dev-only “what the interviewer sees” |
 | `client/src/components/Sidebar.jsx` | Past sessions + new interview |
 | `client/src/components/ProblemPicker.jsx` | Choose problem → create session |
 | `client/src/lib/api.js` | `apiFetch` / `apiJson` with Bearer token |
@@ -30,10 +32,11 @@ Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (p
 | `server/routes/interview.js` | Streaming interview turn + persistence |
 | `server/services/interviewEngine.js` | Transport-agnostic `runTurn` (no vendor SDK) |
 | `server/services/llmProvider.js` | Only module importing `@google/genai`; `streamChat` |
+| `server/services/diagramSerializer.js` | Validate, slim, summary, observations, diff, promptBlock |
 | `server/services/evaluator.js` | Stub evaluation on end |
 | `server/models/Session.js` | Session schema + index |
 | `server/models/Problem.js` | Problem brief schema |
-| `server/lib/diagram.js` | Slim / compare / last snapshot |
+| `server/lib/diagram.js` | Last snapshot + equality helpers |
 | `server/lib/rateLimit.js` | In-memory sliding window |
 | `server/seed/problems.js` | Three hand-written briefs |
 | `server/seed/seed.js` | Idempotent upsert by slug |
@@ -158,8 +161,9 @@ sequenceDiagram
 12. **Diagram** — `slimDiagram(req.body.diagram ?? session.diagram)` (`server/lib/diagram.js`).
 13. **Capture phase** — `phaseAtTurn = session.phase` (used for this turn’s messages).
 14. **Stream headers** — `Content-Type: text/plain`; wire `req` close → `abortController.abort()`.
+14b. **Diagram serialize** — `buildDiagramContext(rawDiagram, previousSnapshot)` (`diagramSerializer.js`) → `promptBlock` + `slimJson` + `persistedDiagram`. Invalid diagram → **400**.
 15. **Engine** — `runTurn` (`server/services/interviewEngine.js`):
-    - `buildSystemPrompt({ problem, phase: session.phase, diagram })` (`server/prompts.js`)
+    - `buildSystemPrompt({ problem, phase, diagramPromptBlock: promptBlock })` (`server/prompts.js`)
     - `streamChat` in `llmProvider.js` maps history to Gemini `user`/`model`, puts the system prompt in `systemInstruction`, streams text, collects `functionCalls` for `advance_phase`
     - Each text delta → `onText` → `res.write` (assistant history stores text only)
 16. **Phase tool** — If `advance_phase` present and not wrapup, `nextPhase(session.phase)` (`prompts.js`). **Phase field on session is not used for this reply’s prompt** (already built).
@@ -302,11 +306,24 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 - **Reads:** session by `_id` + `userId`; public problem fields.
 - **Returns:** `{ session, problem }` or `404`.
 
+### `PATCH /api/sessions/:id/diagram` — `sessions.js`
+
+- **Who:** Canvas debounced autosave (~1.5s) in `Canvas.jsx`.
+- **Validates:** ownership; session `active`; `buildDiagramContext` validation (≤60 nodes, known types, etc.).
+- **Writes:** `session.diagram = persistedDiagram` (positions kept for restore).
+- **Returns:** `{ session: { _id, diagram, updatedAt } }`.
+
+### `GET /api/sessions/:id/diagram-context` — `sessions.js` (dev only)
+
+- **Who:** `DiagramDebugPanel` when `import.meta.env.DEV`.
+- **Validates:** disabled if `NODE_ENV === 'production'` (404); ownership otherwise.
+- **Returns:** `{ promptBlock, summaryText, observationsText, diffText, slimJson }` for the saved diagram vs last snapshot.
+
 ### `POST /api/sessions/:id/end` — `sessions.js`
 
 - **Who:** Chat “End interview” → `handleEnd`.
 - **Validates:** ownership; if already completed, returns as-is.
-- **Writes:** `evaluateSession` stub → `status: completed`, optional diagram slim; `session.save()`.
+- **Writes:** `evaluateSession` stub → `status: completed`, optional diagram via serializer; `session.save()`.
 - **Returns:** `{ session }` including stub `evaluation`.
 
 ### `POST /api/sessions/:id/interview` — see §4
@@ -334,6 +351,8 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 | Rate limit | **429** + `retryAfterMs`. |
 | Session not `active` | **400** `Session is not active`. |
 | Missing env at boot | `config.js` `process.exit(1)` with clear message. |
+| Invalid diagram payload | **400** from serializer (`DiagramValidationError`). |
+| `diagram-context` in production | **404**. |
 
 ---
 
@@ -343,7 +362,9 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 |-------|----------------|-------------------|
 | Clerk session / JWT | Clerk + browser | User via Clerk UI; `getToken` reads |
 | `view`, `session`, `problem`, `streamingText`, `isStreaming`, `sessions[]`, `problems[]` | React state in `App.jsx` | Client only (refetch overwrites from server) |
-| `session.phase`, `status`, `messages`, `diagram`, `evaluation` | Mongo `Session` | Server routes only (`interview` persist, `end`, create) |
+| `session.phase`, `status`, `messages`, `diagram`, `evaluation` | Mongo `Session` | Server routes (`interview`, `PATCH diagram`, `end`, create) |
+| Canvas local nodes/edges | React Flow state in `Canvas.jsx` | User draws; autosave patches server |
+| Slim `diagramSnapshot` on user messages | Mongo message field | Interview persist when slim changed |
 | `Problem` briefs | Mongo `Problem` | Seed script (upsert); not mutated by interview API |
 | System prompt / phase instructions | Rebuilt each turn in `buildSystemPrompt` | Code in `prompts.js` (not stored) |
 | Rate-limit buckets | Process memory `rateLimit.js` | Server process (lost on restart) |
@@ -369,6 +390,8 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 | Chat UX / phase badge | `client/src/components/Chat.jsx` |
 | Streaming client loop | `client/src/App.jsx` → `runInterviewTurn` |
 | API helpers | `client/src/lib/api.js` |
-| Layout / canvas slot | `client/src/App.jsx`, `client/src/components/Canvas.jsx` |
+| Canvas / node types / autosave | `client/src/components/Canvas.jsx`, `canvas/*` |
+| Diagram → LLM text | `server/services/diagramSerializer.js` |
+| Dev diagram preview | `DiagramDebugPanel.jsx`, `GET .../diagram-context` |
 | Problem picker / sidebar | `ProblemPicker.jsx`, `Sidebar.jsx` |
 | CORS / port / mount order | `server/server.js`, `server/config.js` |

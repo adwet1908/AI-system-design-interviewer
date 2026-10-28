@@ -7,6 +7,7 @@ import {
   buildDiagramContext,
   DiagramValidationError,
 } from '../services/diagramSerializer.js';
+import { lastDiagramSnapshot } from '../lib/diagram.js';
 
 const router = Router();
 
@@ -103,6 +104,41 @@ router.get('/sessions/:id', async (req, res) => {
   } catch (err) {
     console.error('Get session failed:', err);
     res.status(500).json({ error: 'Failed to get session' });
+  }
+});
+
+router.get('/sessions/:id/diagram-context', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  try {
+    const userId = getUserId(req);
+    const session = await Session.findOne({
+      _id: req.params.id,
+      userId,
+    }).lean();
+
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const previousSnapshot = lastDiagramSnapshot(session.messages || []);
+    const ctx = buildDiagramContext(session.diagram, previousSnapshot);
+
+    res.json({
+      promptBlock: ctx.promptBlock,
+      summaryText: ctx.summaryText,
+      observationsText: ctx.observationsText,
+      diffText: ctx.diffText,
+      slimJson: ctx.slimJson,
+    });
+  } catch (err) {
+    if (err instanceof DiagramValidationError) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('Diagram context failed:', err);
+    res.status(500).json({ error: 'Failed to build diagram context' });
   }
 });
 

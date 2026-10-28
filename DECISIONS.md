@@ -4,6 +4,50 @@ Newest decisions at the top. Do not delete entries; mark them Superseded instead
 
 ---
 
+## D-021 — Debounced canvas autosave via PATCH diagram
+
+- **Date:** 2026-10-17
+- **Status:** Active
+- **What changed:** `PATCH /api/sessions/:id/diagram`; `Canvas.jsx` ~1.5s debounce; Saved/Saving indicator
+- **Why:** Persist drawings without blocking the streaming interviewer. Reload restores exact positions.
+- **Alternatives considered:** Save only on each chat turn (lost mid-turn work). Save every pointer move (too chatty).
+- **Tradeoffs:** Brief window where a crash can lose unsaved edits. Dirty-flag skips save on hydrate.
+
+---
+
+## D-020 — Untrusted diagram labels/notes delimited in the prompt
+
+- **Date:** 2026-10-17
+- **Status:** Active
+- **What changed:** `buildPromptBlock` delimiters + ignore-instructions rule; unit test for injection label
+- **Why:** Candidate-written labels could try prompt injection. Treat the diagram block as DATA.
+- **Alternatives considered:** Strip all punctuation from labels (hurts useful notes like "TTL 1h").
+- **Tradeoffs:** Model compliance is not guaranteed; delimiters + instruction are defense-in-depth.
+
+---
+
+## D-019 — Summary + observations + diff instead of raw canvas JSON alone
+
+- **Date:** 2026-10-17
+- **Status:** Active
+- **What changed:** `diagramSerializer.js` `summaryText`, `observationsText`, `diffText` inside `promptBlock`
+- **Why:** LLMs reason better over readable structure and change lists than over position-heavy RF JSON. Observations are neutral FACTS only.
+- **Alternatives considered:** Raw JSON only (harder for the model). Opinionated critique in observations (rejected — interviewer decides).
+- **Tradeoffs:** Serializer heuristics can miss nuance; must stay factual.
+
+---
+
+## D-018 — Server-side diagram interpretation (never trust client shape)
+
+- **Date:** 2026-10-17
+- **Status:** Active
+- **What changed:** `server/services/diagramSerializer.js`; interview route runs it every turn
+- **Why:** Client can send anything. Validation, slim ids, summary, and prompt assembly belong on the server.
+- **Alternatives considered:** Client-built summary string (spoofable). Trust RF JSON as-is (noisy + unsafe).
+- **Tradeoffs:** Client and server must agree on known node types. Caps: 60 nodes / 120 edges.
+
+---
+
 ## D-017 — Isolate Gemini behind llmProvider.js; default model gemini-flash-latest
 
 - **Date:** 2026-10-17
