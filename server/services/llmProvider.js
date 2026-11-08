@@ -1,17 +1,27 @@
-import { GoogleGenAI } from '@google/genai';
+import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
 
-const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
+const client = new Anthropic({ apiKey: config.anthropicApiKey });
+
+// On a safety-classifier decline, the API re-runs the request on Anthropic's
+// recommended fallback model inside the same call (Claude API only).
+const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
 /**
- * Map stored chat roles to Gemini content roles.
- * History stores "assistant"; Gemini expects "model".
+ * Stored history is already { role: 'user' | 'assistant', content: string },
+ * which is the Messages API shape. Empty text blocks are rejected by the API.
  */
-function toProviderContents(messages) {
-  return messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
+function toProviderMessages(messages) {
+  return messages
+    .filter((m) => typeof m.content === 'string' && m.content.trim())
+    .map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+}
+
+function textOf(message) {
+  return message.content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('');
 }
 
 /**
@@ -21,10 +31,10 @@ function toProviderContents(messages) {
  * @param {object} params
  * @param {string} params.systemInstruction
  * @param {{ role: string, content: string }[]} params.messages
- * @param {object[]} [params.tools] - Gemini functionDeclarations
+ * @param {object[]} [params.tools] - Anthropic tool definitions ({ name, description, input_schema })
  * @param {(chunk: string) => void} [params.onText]
  * @param {AbortSignal} [params.signal]
- * @returns {Promise<{ text: string, functionCalls: object[], aborted: boolean }>}
+ * @returns {Promise<{ text: string, functionCalls: { name: string, args: object }[], aborted: boolean, refused: boolean }>}
  */
 export async function streamChat({
   systemInstruction,
@@ -33,54 +43,58 @@ export async function streamChat({
   onText,
   signal,
 }) {
-  const contents = toProviderContents(messages);
-
-  const stream = await ai.models.generateContentStream({
-    model: config.geminiModel,
-    contents,
-    config: {
-      systemInstruction,
-      maxOutputTokens: 1024,
-      ...(signal ? { abortSignal: signal } : {}),
+  const stream = client.beta.messages.stream(
+    {
+      model: config.anthropicModel,
+      max_tokens: 16000,
+      // Short conversational turns: low effort keeps time-to-first-token down.
+      output_config: { effort: 'low' },
+      system: systemInstruction,
+      messages: toProviderMessages(messages),
       ...(tools.length
-        ? { tools: [{ functionDeclarations: tools }] }
+        ? { tools: tools.map((tool) => ({ ...tool, eager_input_streaming: true })) }
         : {}),
+      betas: [FALLBACK_BETA],
+      fallbacks: 'default',
     },
-  });
+    { signal }
+  );
 
   let text = '';
-  let aborted = false;
-  let functionCalls = [];
+  stream.on('text', (delta) => {
+    text += delta;
+    if (typeof onText === 'function') onText(delta);
+  });
 
+  let message;
   try {
-    for await (const chunk of stream) {
-      if (signal?.aborted) {
-        aborted = true;
-        break;
-      }
-
-      const delta = chunk.text;
-      if (delta) {
-        text += delta;
-        if (typeof onText === 'function') onText(delta);
-      }
-
-      if (chunk.functionCalls?.length) {
-        functionCalls = chunk.functionCalls;
-      }
-    }
+    message = await stream.finalMessage();
   } catch (err) {
-    if (aborted || signal?.aborted || err?.name === 'AbortError') {
-      return { text, functionCalls: [], aborted: true };
+    if (signal?.aborted || err instanceof Anthropic.APIUserAbortError) {
+      return { text, functionCalls: [], aborted: true, refused: false };
     }
-    throw err;
+    if (err instanceof Anthropic.APIError) throw err;
+    // With eager input streaming the SDK rejects when a tool input isn't valid
+    // JSON. Keep the spoken reply; just don't act on the broken tool call.
+    console.error('Discarding unparseable tool input:', err.message);
+    return { text, functionCalls: [], aborted: false, refused: false };
   }
 
-  if (aborted || signal?.aborted) {
-    return { text, functionCalls: [], aborted: true };
-  }
+  // A refusal can cut a tool_use off mid-input, and max_tokens can truncate one:
+  // only act on tool calls from a turn that ended normally.
+  const functionCalls =
+    message.stop_reason === 'tool_use'
+      ? message.content
+          .filter((block) => block.type === 'tool_use')
+          .map((block) => ({ name: block.name, args: block.input ?? {} }))
+      : [];
 
-  return { text, functionCalls, aborted: false };
+  return {
+    text: text || textOf(message),
+    functionCalls,
+    aborted: false,
+    refused: message.stop_reason === 'refusal',
+  };
 }
 
 /**
@@ -91,7 +105,7 @@ export async function streamChat({
  * @param {object} params
  * @param {string} params.systemInstruction
  * @param {{ role: string, content: string }[]} params.messages
- * @param {object} params.responseSchema - Gemini response JSON schema
+ * @param {object} params.responseSchema - JSON schema (every object needs additionalProperties: false)
  * @param {AbortSignal} [params.signal]
  * @returns {Promise<string>} raw JSON text
  */
@@ -101,23 +115,32 @@ export async function generateJson({
   responseSchema,
   signal,
 }) {
-  const contents = toProviderContents(messages);
-
-  const response = await ai.models.generateContent({
-    model: config.geminiModel,
-    contents,
-    config: {
-      systemInstruction,
-      responseMimeType: 'application/json',
-      responseSchema,
-      maxOutputTokens: 2048,
-      ...(signal ? { abortSignal: signal } : {}),
+  const message = await client.beta.messages.create(
+    {
+      model: config.anthropicModel,
+      max_tokens: 16000,
+      // Grading is judgment-heavy and runs once per interview.
+      output_config: {
+        effort: 'high',
+        format: { type: 'json_schema', schema: responseSchema },
+      },
+      system: systemInstruction,
+      messages: toProviderMessages(messages),
+      betas: [FALLBACK_BETA],
+      fallbacks: 'default',
     },
-  });
+    { signal }
+  );
 
-  return response.text;
+  if (message.stop_reason === 'refusal') {
+    throw new Error(`Model declined to respond (${message.stop_details?.category ?? 'unknown'})`);
+  }
+  if (message.stop_reason === 'max_tokens') {
+    throw new Error('Model response hit max_tokens before the JSON was complete');
+  }
+  return textOf(message);
 }
 
 export function getLlmModelName() {
-  return config.geminiModel;
+  return config.anthropicModel;
 }

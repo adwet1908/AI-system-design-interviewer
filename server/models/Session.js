@@ -41,6 +41,10 @@ const sessionSchema = new mongoose.Schema(
       enum: ['active', 'completed'],
       default: 'active',
     },
+    // Set at creation from the user's tier; null on sessions from before limits.
+    timeLimitMinutes: { type: Number, default: null },
+    // When the first turn started; the time limit counts from here.
+    startedAt: { type: Date, default: null },
     messages: { type: [messageSchema], default: [] },
     diagram: {
       nodes: { type: Array, default: [] },

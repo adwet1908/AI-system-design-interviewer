@@ -16,14 +16,16 @@ const categoryProperties = Object.fromEntries(
     {
       type: 'object',
       properties: {
-        score: { type: 'integer' },
+        score: { type: 'integer', enum: [1, 2, 3, 4, 5] },
         feedback: { type: 'string' },
       },
       required: ['score', 'feedback'],
+      additionalProperties: false,
     },
   ])
 );
 
+// Structured outputs require additionalProperties: false on every object.
 export const EVALUATION_SCHEMA = {
   type: 'object',
   properties: {
@@ -31,10 +33,12 @@ export const EVALUATION_SCHEMA = {
       type: 'object',
       properties: categoryProperties,
       required: EVALUATION_CATEGORIES,
+      additionalProperties: false,
     },
     feedback: { type: 'string' },
   },
   required: ['scores', 'feedback'],
+  additionalProperties: false,
 };
 
 const FALLBACK_EVALUATION = {

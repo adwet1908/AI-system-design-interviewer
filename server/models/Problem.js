@@ -9,6 +9,7 @@ const problemSchema = new mongoose.Schema(
       required: true,
       enum: ['easy', 'medium', 'hard'],
     },
+    tier: { type: String, enum: ['free', 'premium'], default: 'free' },
     prompt: { type: String, required: true },
     hiddenRequirements: { type: [String], default: [] },
     keyTopics: { type: [String], default: [] },

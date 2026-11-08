@@ -11,12 +11,37 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import ArchitectureNode from './canvas/ArchitectureNode.jsx';
 import Palette from './canvas/Palette.jsx';
 import { defaultLabel } from './canvas/nodeConfig.js';
 import { apiJson } from '../lib/api.js';
+import { confirmToast, notifyError } from '../lib/notify.jsx';
 
 const rfNodeTypes = { architecture: ArchitectureNode };
+
+// React Flow queues a fitView until nodes exist, so an empty canvas would zoom
+// onto the first dropped node. Only fit when there is something to fit, and
+// never zoom past 100%.
+const FIT_VIEW_OPTIONS = { padding: 0.2, maxZoom: 1 };
+const DEFAULT_VIEWPORT = { x: 0, y: 0, zoom: 1 };
+// Approximate rendered node size, used to centre drops and avoid stacking.
+const NODE_W = 130;
+const NODE_H = 50;
+
+/** Nudge a position down-right until it no longer sits on top of an existing node. */
+function freePosition(nodes, pos) {
+  let { x, y } = pos;
+  for (let i = 0; i < 20; i += 1) {
+    const hit = nodes.some(
+      (n) => Math.abs(n.position.x - x) < NODE_W * 0.6 && Math.abs(n.position.y - y) < NODE_H
+    );
+    if (!hit) break;
+    x += 30;
+    y += 30;
+  }
+  return { x, y };
+}
 
 let idSeq = 1;
 function nextId() {
@@ -24,6 +49,11 @@ function nextId() {
   return `node_${Date.now()}_${idSeq}`;
 }
 
+/**
+ * Saved diagram -> React Flow state. The node component edits its own label/note,
+ * so each node carries the shared onChange callback in `data` (React Flow gives
+ * custom nodes nothing else to call back through). toPayload strips it again.
+ */
 function toFlow(diagram, onChange) {
   const nodes = (diagram?.nodes || []).map((n) => ({
     id: n.id,
@@ -76,7 +106,12 @@ function CanvasInner({
   onDiagramSaved,
   saveStatus,
   setSaveStatus,
+  expanded,
+  onToggleExpand,
 }) {
+  // Stable identity (empty deps) on purpose: it's baked into every node's data, and
+  // a new function each render would make every node look changed. It only uses
+  // the setNodes setter and markDirty, both of which are safe to capture once.
   const onNodeDataChange = useCallback((nodeId, patch) => {
     setNodes((nds) =>
       nds.map((x) =>
@@ -86,6 +121,11 @@ function CanvasInner({
     markDirty();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // dirty: the user changed something since the last successful save. React Flow
+  // also emits changes on its own (measuring node sizes, selection), and those
+  // must not trigger a save.
+  // hydrated: the initial load has settled. Until then nothing saves, so loading a
+  // session can't write the same diagram straight back.
   const dirtyRef = useRef(false);
   const hydratedRef = useRef(false);
   const debounceRef = useRef(null);
@@ -110,7 +150,7 @@ function CanvasInner({
     setNodes(next.nodes);
     setEdges(next.edges);
     setTimeout(() => {
-      fitView({ padding: 0.2 });
+      if (next.nodes.length) fitView(FIT_VIEW_OPTIONS);
       hydratedRef.current = true;
     }, 50);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount / session key
@@ -122,9 +162,15 @@ function CanvasInner({
     }
     setSaveStatus('saving');
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Debounce: dragging a node fires dozens of changes per second; save once
+    // 1.5s after the last one.
     debounceRef.current = setTimeout(async () => {
       try {
         const token = await getToken();
+        // This timer closed over nodes/edges from 1.5s ago. The updater form is
+        // used only to read the latest state: both updaters return their input
+        // unchanged, so nothing re-renders. (Side effects in updaters run twice
+        // under StrictMode in dev, which is why you may see two PATCHes there.)
         setNodes((nds) => {
           setEdges((eds) => {
             const body = toPayload(nds, eds);
@@ -134,6 +180,8 @@ function CanvasInner({
               body: JSON.stringify({ diagram: body }),
             })
               .then((data) => {
+                // Edits made while this request was in flight re-mark dirty and
+                // have their own timer queued, so clearing here doesn't lose them.
                 dirtyRef.current = false;
                 setSaveStatus('saved');
                 onDiagramSaved?.(data.session?.diagram || body);
@@ -141,6 +189,8 @@ function CanvasInner({
               .catch((err) => {
                 console.error(err);
                 setSaveStatus('error');
+                // One id: repeated failures replace the toast instead of stacking.
+                notifyError(`Couldn't save your diagram: ${err.message}`, 'diagram-save');
               });
             return eds;
           });
@@ -199,19 +249,24 @@ function CanvasInner({
 
   function addNode(type, position) {
     const id = nextId();
-    const pos =
-      position ||
-      screenToFlowPosition({
-        x: (wrapRef.current?.clientWidth || 400) / 2,
-        y: (wrapRef.current?.clientHeight || 300) / 2,
-      });
+    let pos = position;
+    if (!pos) {
+      // screenToFlowPosition takes viewport (client) coordinates.
+      const rect = wrapRef.current?.getBoundingClientRect();
+      const center = rect
+        ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+        : { x: 400, y: 300 };
+      pos = screenToFlowPosition(center);
+    }
+    // Centre the node on the drop point rather than hanging it off the cursor.
+    pos = { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 };
     markDirty();
     setNodes((nds) => [
       ...nds,
       {
         id,
         type: 'architecture',
-        position: pos,
+        position: freePosition(nds, pos),
         data: {
           nodeType: type,
           label: defaultLabel(type),
@@ -234,8 +289,9 @@ function CanvasInner({
     addNode(type, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
   }
 
-  function clearCanvas() {
-    if (!window.confirm('Clear the entire canvas?')) return;
+  async function clearCanvas() {
+    const ok = await confirmToast('Clear the entire canvas?', { confirmLabel: 'Clear', danger: true });
+    if (!ok) return;
     markDirty();
     setNodes([]);
     setEdges([]);
@@ -273,6 +329,17 @@ function CanvasInner({
           >
             Clear
           </button>
+          {onToggleExpand && (
+            <button
+              type="button"
+              onClick={onToggleExpand}
+              aria-label={expanded ? 'Show chat' : 'Expand canvas'}
+              title={expanded ? 'Show chat' : 'Expand canvas'}
+              className="rounded border border-slate-300 p-1 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              {expanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+            </button>
+          )}
         </div>
       </div>
       {selectedEdgeId && (
@@ -308,13 +375,20 @@ function CanvasInner({
               );
             }}
             onPaneClick={() => setSelectedEdgeId(null)}
-            fitView
+            defaultViewport={DEFAULT_VIEWPORT}
             deleteKeyCode={['Backspace', 'Delete']}
             proOptions={{ hideAttribution: true }}
           >
             <Background gap={16} />
-            <Controls />
-            <MiniMap pannable zoomable className="!bg-slate-50 dark:!bg-slate-800" />
+            <Controls fitViewOptions={FIT_VIEW_OPTIONS} />
+            {/* Top-right, small: at the bottom it covered the zoom controls on short panes. */}
+            <MiniMap
+              position="top-right"
+              pannable
+              zoomable
+              style={{ width: 120, height: 80 }}
+              className="!bg-slate-50 dark:!bg-slate-800"
+            />
           </ReactFlow>
         </div>
       </div>
@@ -326,7 +400,7 @@ export default function Canvas(props) {
   if (!props.sessionId) {
     return (
       <div className="flex h-full items-center justify-center border-l border-slate-200 bg-slate-50 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
-        Open a session to draw
+        Start the interview to draw
       </div>
     );
   }

@@ -1,6 +1,7 @@
 /**
  * Simple in-memory sliding window rate limiter (per key).
- * Fine for a single-process MVP.
+ * Fine for a single-process MVP: counts reset on restart and aren't shared across
+ * instances. Keys are never evicted, so the map grows with distinct users.
  */
 const buckets = new Map();
 

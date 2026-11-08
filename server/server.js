@@ -6,6 +6,7 @@ import { connectDb } from './db.js';
 import { requireAuth, getUserId } from './middleware/requireAuth.js';
 import sessionsRouter from './routes/sessions.js';
 import interviewRouter from './routes/interview.js';
+import billingRouter from './routes/billing.js';
 
 const app = express();
 const devAuth = Boolean(process.env.DEV_AUTH_USER_ID);
@@ -35,6 +36,7 @@ app.get('/api/me', (req, res) => {
 
 app.use('/api', sessionsRouter);
 app.use('/api', interviewRouter);
+app.use('/api', billingRouter);
 
 await connectDb();
 

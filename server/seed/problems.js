@@ -3,6 +3,7 @@ export const problems = [
     slug: 'url-shortener',
     title: 'URL Shortener',
     difficulty: 'easy',
+    tier: 'free',
     prompt:
       'Design a URL shortener like bit.ly. Users submit a long URL and get back a short link. When someone visits the short link, they are redirected to the original URL. Walk me through how you would design this system.',
     hiddenRequirements: [
@@ -36,6 +37,7 @@ export const problems = [
     slug: 'rate-limiter',
     title: 'Rate Limiter',
     difficulty: 'medium',
+    tier: 'free',
     prompt:
       'Design a rate limiting service that other internal APIs can call (or that sits as a gateway middleware) to decide whether a request should be allowed. Cover how you would enforce limits fairly and at scale.',
     hiddenRequirements: [
@@ -69,6 +71,7 @@ export const problems = [
     slug: 'chat-app',
     title: 'Chat Application',
     difficulty: 'medium',
+    tier: 'free',
     prompt:
       'Design a 1:1 and group chat application (think WhatsApp-lite). Users send text messages in conversations, see online/offline presence, and get near-real-time delivery. Focus on the backend architecture.',
     hiddenRequirements: [
@@ -96,6 +99,108 @@ export const problems = [
       'A 256-person group becomes suddenly viral and receives 200 messages/minute for an hour. How do online members and storage cope?',
       'Users in weak networks send the same message 3 times; the other side must see it once, in order.',
       'Product wants disappearing messages (24h TTL) without breaking read receipts or search in other chats.',
+    ],
+  },
+  {
+    slug: 'news-feed',
+    title: 'News Feed',
+    difficulty: 'hard',
+    tier: 'premium',
+    prompt:
+      'Design the home news feed for a social network like Facebook or Instagram. Users follow other users and see a ranked feed of recent posts from people they follow. Walk me through the architecture for publishing posts and serving the feed.',
+    hiddenRequirements: [
+      '500 million daily active users; each opens the feed ~10 times a day (~5 billion feed reads/day, ~60k/s average, ~3x at peak).',
+      'Average user follows 200 accounts; some celebrity accounts have 50+ million followers.',
+      'A new post should appear in followers\' feeds within ~10 seconds for normal accounts; a minute is acceptable for celebrities.',
+      'Feed page load p99 under 300ms; feeds are paginated (cursor-based, 20 posts per page).',
+      'Feed is ranked, not purely chronological, but ranking can use precomputed features; v1 ranking model is a black-box scoring service.',
+    ],
+    keyTopics: [
+      'Fan-out on write (push) vs fan-out on read (pull), and the hybrid for celebrities',
+      'Feed cache / timeline storage per user (e.g. Redis lists of post ids)',
+      'Post storage and media storage (object store + CDN) separate from feed ids',
+      'Ranking pipeline: candidate generation then scoring',
+      'Cursor pagination and dedup across pages',
+      'Handling inactive users (do not precompute feeds nobody reads)',
+    ],
+    commonPitfalls: [
+      'Pure fan-out on write for everyone, then a celebrity post triggers 50M writes in one burst.',
+      'Pure fan-out on read with a giant JOIN across 200 followees on every feed open.',
+      'Storing full post bodies in every follower\'s timeline instead of post ids.',
+      'Offset-based pagination, causing duplicates and gaps as new posts arrive.',
+    ],
+    curveballs: [
+      'A celebrity with 80M followers posts during a major live event. Walk me through exactly what happens in the next 60 seconds.',
+      'Product wants to remove a post (policy violation) from every feed within 1 minute.',
+      'A region\'s feed cache cluster is lost. How do you rebuild feeds without melting the post database?',
+    ],
+  },
+  {
+    slug: 'ride-hailing',
+    title: 'Ride-Hailing Service',
+    difficulty: 'hard',
+    tier: 'premium',
+    prompt:
+      'Design the backend for a ride-hailing app like Uber. Riders request a ride, nearby drivers are matched, and both see each other\'s live location until the trip ends. Focus on matching and location tracking.',
+    hiddenRequirements: [
+      '5 million active drivers globally at peak; each sends a GPS update every 4 seconds (~1.25M location writes/s).',
+      '20 million rides per day; match a rider to a driver within 5 seconds p95.',
+      'A driver must never be assigned to two rides at once (strong guarantee on assignment).',
+      'Rider sees driver location updates at least every 5 seconds during pickup and trip.',
+      'Operates city by city; a single city outage must not affect other cities.',
+    ],
+    keyTopics: [
+      'Geospatial indexing (geohash / S2 / quadtree) for nearby-driver queries',
+      'Ephemeral location store vs durable trip store',
+      'Matching service and atomic driver assignment (locks / conditional writes)',
+      'Sharding by city / region and cell-based architecture',
+      'Real-time push to rider and driver apps (WebSockets)',
+      'Trip state machine and idempotent transitions',
+    ],
+    commonPitfalls: [
+      'Writing every GPS ping to a relational database with a lat/long index.',
+      'Querying "all drivers within 2km" by scanning all drivers in the city.',
+      'Assigning drivers without an atomic check, so two riders get the same driver.',
+      'One global cluster for all cities, so one hotspot affects everyone.',
+    ],
+    curveballs: [
+      'A stadium concert ends and 30,000 riders request rides from a 1km area within 10 minutes.',
+      'Drivers in a tunnel stop sending location for 2 minutes mid-trip. What do rider and billing see?',
+      'Product introduces surge pricing that must be shown before the rider confirms and honored after.',
+    ],
+  },
+  {
+    slug: 'file-storage',
+    title: 'Cloud File Storage',
+    difficulty: 'hard',
+    tier: 'premium',
+    prompt:
+      'Design a cloud file storage and sync service like Dropbox or Google Drive. Users upload files from multiple devices, the files sync across devices, and users can share folders with others.',
+    hiddenRequirements: [
+      '100 million users, 1 billion files uploaded per day; average file 500KB, max file size 50GB.',
+      'Edits on one device appear on the user\'s other online devices within ~10 seconds.',
+      'Durability of 11 nines for stored file content; metadata must be strongly consistent per user.',
+      'Large uploads must be resumable after network drops.',
+      'Bandwidth matters: re-uploading a 2GB file after a 1-byte change is unacceptable.',
+    ],
+    keyTopics: [
+      'Chunking + content hashing for dedup and delta sync',
+      'Separating metadata service (DB) from block storage (object store)',
+      'Resumable / multipart uploads, direct-to-object-store with signed URLs',
+      'Sync protocol: change journal / cursor per device, notifications via long-poll or WebSocket',
+      'Conflict handling when two devices edit offline',
+      'Sharing and permissions model for folders',
+    ],
+    commonPitfalls: [
+      'Streaming file bytes through the application servers instead of direct-to-object-store.',
+      'Storing whole files instead of chunks, losing dedup and delta sync.',
+      'Polling the full folder listing from every device to detect changes.',
+      'Last-write-wins silently, losing a user\'s offline edits.',
+    ],
+    curveballs: [
+      'A user edits the same document on a laptop and phone while both are offline, then reconnects both.',
+      'A shared folder with 10,000 members gets a 5GB file added. How do notifications and downloads behave?',
+      'Legal requires that a deleted file be unrecoverable from all storage within 30 days, despite dedup.',
     ],
   },
 ];

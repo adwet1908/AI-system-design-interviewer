@@ -26,7 +26,7 @@ function ArchitectureNode({ id, data, selected }) {
 
   return (
     <div
-      className={`min-w-[140px] max-w-[200px] rounded-md border-2 bg-white px-2 py-1.5 shadow-sm dark:bg-slate-800 dark:shadow-none ${
+      className={`w-[130px] rounded-md border-2 bg-white px-2 py-1.5 shadow-sm dark:bg-slate-800 dark:shadow-none ${
         selected ? 'ring-2 ring-slate-400 dark:ring-slate-500' : ''
       }`}
       style={{ borderColor: cfg.color }}

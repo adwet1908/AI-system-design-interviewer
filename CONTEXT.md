@@ -24,8 +24,8 @@ Target: a working MVP built over one weekend. Favor simple and shippable over cl
 - **Backend:** Node.js + Express
 - **Database:** MongoDB (Atlas) + Mongoose
 - **Auth:** Clerk (`@clerk/react` on the frontend, `@clerk/express` on the backend)
-- **LLM:** Google Gemini via `@google/genai`, accessed only through `server/services/llmProvider.js`. Model from `GEMINI_MODEL` (default `gemini-flash-latest`). Anthropic is not used.
-- **Payments:** Razorpay, **parked** for later. Do NOT build payments now.
+- **LLM:** Anthropic Claude via `@anthropic-ai/sdk` (D-026), accessed only through `server/services/llmProvider.js`. Model from `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`). Gemini is no longer used.
+- **Payments:** Razorpay (D-025). One-time ₹299 order buys a 30-day premium pass; premium problems are gated server-side. Razorpay is accessed only through `server/services/paymentProvider.js`. Subscriptions are not used.
 
 Do NOT use LangChain or similar agent frameworks. The interviewer is one LLM call per turn with server-held state. Do not import vendor SDKs from routes or `interviewEngine.js`.
 
@@ -36,7 +36,7 @@ The LLM has no memory. On every turn the backend rebuilds the full context and s
 1. Frontend sends `{ message, diagram }` to `POST /api/sessions/:id/interview`
 2. Backend loads the session (problem, current phase, message history)
 3. Backend builds the system prompt = base persona + private problem brief + current phase block + current diagram JSON
-4. Gemini streams a reply back to the client; the backend saves the turn
+4. Claude streams a reply back to the client; the backend saves the turn
 5. If the model called the `advance_phase` tool, the backend bumps `session.phase` (takes effect on the NEXT turn)
 
 There are **no pre-written interview questions**. We seed **problem briefs**; the LLM improvises follow-ups using the brief as a private cheat sheet.
@@ -74,6 +74,8 @@ Session {
   problemSlug,
   phase,             // one of the phases above
   status,            // "active" | "completed"
+  timeLimitMinutes,  // 15 free / 30 premium, fixed at creation; null on pre-limit sessions (unlimited)
+  startedAt,         // first turn; the time limit counts from here
   messages: [{
     role,            // "user" | "assistant"
     content,
@@ -87,7 +89,11 @@ Session {
   createdAt, updatedAt
 }
 
-Problem { ...brief shape above }
+Problem { ...brief shape above, tier }   // tier: "free" | "premium"
+
+User { userId, premiumUntil, appliedOrderIds } // created on first purchase; appliedOrderIds makes grants idempotent
+Payment { userId, orderId, paymentId, amount, currency, passDays, status, paidAt } // status: "created" | "paid"
+DailyUsage { userId, day, count, expiresAt } // interviews started per quota day (YYYY-MM-DD in QUOTA_TIMEZONE); unique (userId, day); TTL on expiresAt
 ```
 
 Index: `{ userId: 1, createdAt: -1 }` on Session.
@@ -101,7 +107,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 
 ## Implementation rules and gotchas
 
-- **Streaming:** use `fetch` with `response.body.getReader()` on the frontend, NOT `EventSource` (it can't send the Clerk `Authorization` header). Backend streams via `llmProvider.streamChat` (Gemini under the hood) and writes text chunks to `res`.
+- **Streaming:** use `fetch` with `response.body.getReader()` on the frontend, NOT `EventSource` (it can't send the Clerk `Authorization` header). Backend streams via `llmProvider.streamChat` (Claude under the hood) and writes text chunks to `res`.
 - **Store assistant TEXT only** in message history. Do not store tool/function-call payloads in `messages[].content`, or later turns get polluted. Phase state lives in `session.phase`.
 - **Phase changes apply on the next turn.** The reply being streamed was generated under the old phase. That's intended.
 - The model must write its spoken reply FIRST, then call `advance_phase` if appropriate.
@@ -109,7 +115,8 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
 - Keep the system prompt builder in `prompts.js` as pure functions so it's easy to test and tune.
 - Never send the private brief to the client. It stays server-side.
 - Use ES modules. Keep route handlers thin; put prompt building, session logic, and LLM calls in separate modules.
-- API keys come from env vars (`GEMINI_API_KEY`, Clerk keys, `MONGODB_URI`). Never commit them.
+- API keys come from env vars (`ANTHROPIC_API_KEY`, Clerk keys, `MONGODB_URI`, optional `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`). Never commit them.
+- Premium access is decided only on the server (`entitlements.canAccessProblem`). Grant a pass only after `verifyPaymentSignature` succeeds; never trust a client "payment succeeded" message or a client-sent amount.
 
 ## Suggested structure
 
@@ -121,7 +128,7 @@ Index: `{ userId: 1, createdAt: -1 }` on Session.
   routes/sessions.js   // create/list/get sessions, end interview, list problems
   services/evaluator.js
   services/interviewEngine.js
-  services/llmProvider.js   // only module that imports @google/genai
+  services/llmProvider.js   // only module that imports @anthropic-ai/sdk
   models/Session.js
   models/Problem.js
   seed/problems.js     // 3 hand-written briefs
@@ -148,4 +155,4 @@ Currently at: Milestone 6 complete — React Flow canvas + server diagram serial
 
 ## Out of scope for the MVP
 
-Payments, voice mode, multiplayer, code execution, LLM-generated problems. Do not build these unless asked.
+Subscriptions / auto-renew, voice mode, multiplayer, code execution, LLM-generated problems. Do not build these unless asked.

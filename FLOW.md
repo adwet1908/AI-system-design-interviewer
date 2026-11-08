@@ -1,6 +1,6 @@
 # System flow map
 
-**Last verified against commit `f801f94`.**  
+**Last verified against commit `c0c1fad` + uncommitted D-025 billing, D-026 Claude migration, D-027 session-on-start, D-028 time limits and D-029 daily quota.**  
 Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (product rules).
 
 ---
@@ -21,8 +21,9 @@ Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (p
 | `client/src/components/canvas/*` | Typed nodes, palette, node config |
 | `client/src/components/DiagramDebugPanel.jsx` | Dev-only “what the interviewer sees” |
 | `client/src/components/Sidebar.jsx` | Past sessions + new interview |
-| `client/src/components/ProblemPicker.jsx` | Choose problem → create session |
+| `client/src/components/ProblemPicker.jsx` | Choose problem → preview it (session is created on Start) |
 | `client/src/lib/api.js` | `apiFetch` / `apiJson` with Bearer token |
+| `client/src/lib/razorpay.js` | Lazy-load Razorpay Checkout; `openCheckout(order)` |
 | `server/server.js` | Express app, CORS, Clerk, mounts routes |
 | `server/config.js` | Env load + fail-fast required vars |
 | `server/db.js` | `connectDb()` Mongoose connection |
@@ -30,15 +31,23 @@ Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (p
 | `server/prompts.js` | Persona, phases, tools, `buildSystemPrompt` |
 | `server/routes/sessions.js` | Problems + session CRUD/end |
 | `server/routes/interview.js` | Streaming interview turn + persistence |
+| `server/routes/billing.js` | Premium pass: status, create order, verify payment |
+| `server/services/paymentProvider.js` | Only module that talks to Razorpay (`createOrder`, `verifyPaymentSignature`) |
+| `server/services/entitlements.js` | `getEntitlement`, idempotent `grantPremiumPass`, `reconcilePaidOrders`, `canAccessProblem` |
+| `server/services/billing.test.js` | Unit tests for signature verification + pass expiry math |
 | `server/services/interviewEngine.js` | Transport-agnostic `runTurn` (no vendor SDK) |
-| `server/services/llmProvider.js` | Only module importing `@google/genai`; `streamChat` |
+| `server/services/llmProvider.js` | Only module importing `@anthropic-ai/sdk`; `streamChat`, `generateJson` |
 | `server/services/diagramSerializer.js` | Validate, slim, summary, observations, diff, promptBlock |
-| `server/services/evaluator.js` | Stub evaluation on end |
+| `server/services/evaluator.js` | Real evaluator: one-shot Claude structured-output (JSON schema) call scored against the brief |
+| `server/services/evaluator.test.js` | Unit tests for `normalizeEvaluation` response-shape validation |
+| `client/src/lib/theme.js` | `useTheme` hook: localStorage-persisted dark/light theme |
 | `server/models/Session.js` | Session schema + index |
-| `server/models/Problem.js` | Problem brief schema |
+| `server/models/Problem.js` | Problem brief schema (+ `tier: free \| premium`) |
+| `server/models/User.js` | Entitlement per Clerk user (`premiumUntil`, `appliedOrderIds`) |
+| `server/models/Payment.js` | One row per Razorpay order (`created` → `paid`) |
 | `server/lib/diagram.js` | Last snapshot + equality helpers |
 | `server/lib/rateLimit.js` | In-memory sliding window |
-| `server/seed/problems.js` | Three hand-written briefs |
+| `server/seed/problems.js` | Hand-written briefs: 3 free, 3 premium |
 | `server/seed/seed.js` | Idempotent upsert by slug |
 
 ---
@@ -53,7 +62,7 @@ flowchart LR
   Engine["interviewEngine.runTurn"]
   LLM["llmProvider.streamChat"]
   Mongo["MongoDB"]
-  Gemini["Google Gemini API"]
+  Claude["Anthropic Messages API (Claude)"]
 
   Browser -->|"Bearer token + JSON / stream"| Express
   Browser -->|"sign-in / getToken"| Clerk
@@ -61,7 +70,7 @@ flowchart LR
   Express --> Engine
   Express --> Mongo
   Engine --> LLM
-  LLM --> Gemini
+  LLM --> Claude
   Engine -->|"onText chunks"| Express
   Express -->|"text/plain stream"| Browser
 ```
@@ -118,7 +127,7 @@ sequenceDiagram
   participant Eng as runTurn
   participant Prompts as buildSystemPrompt
   participant LLM as llmProvider.streamChat
-  participant Gem as Gemini API
+  participant Gem as Claude API
 
   Chat->>App: onSend(text) or onStart('')
   App->>App: getToken(); AbortController
@@ -129,7 +138,7 @@ sequenceDiagram
   API->>Eng: runTurn({session, problem, userText, diagram, onText})
   Eng->>Prompts: buildSystemPrompt(...)
   Eng->>LLM: streamChat({systemInstruction, messages, tools})
-  LLM->>Gem: generateContentStream (systemInstruction + user/model roles)
+  LLM->>Gem: beta.messages.stream (system + user/assistant messages, fallbacks: default)
   loop chunks
     Gem-->>LLM: chunk.text
     LLM-->>Eng: onText(chunk)
@@ -164,7 +173,7 @@ sequenceDiagram
 14b. **Diagram serialize** — `buildDiagramContext(rawDiagram, previousSnapshot)` (`diagramSerializer.js`) → `promptBlock` + `slimJson` + `persistedDiagram`. Invalid diagram → **400**.
 15. **Engine** — `runTurn` (`server/services/interviewEngine.js`):
     - `buildSystemPrompt({ problem, phase, diagramPromptBlock: promptBlock })` (`server/prompts.js`)
-    - `streamChat` in `llmProvider.js` maps history to Gemini `user`/`model`, puts the system prompt in `systemInstruction`, streams text, collects `functionCalls` for `advance_phase`
+    - `streamChat` in `llmProvider.js` sends history as Claude `user`/`assistant` messages with the system prompt in `system` (model `ANTHROPIC_MODEL`, default `claude-sonnet-5-5`, effort `low`), streams text deltas, and returns `advance_phase` `tool_use` blocks as `functionCalls` only when `stop_reason` is `tool_use`. A `refusal` (after the server-side fallback also declines) is returned as `refused: true`; the engine then substitutes a short redirect line and does not advance the phase
     - Each text delta → `onText` → `res.write` (assistant history stores text only)
 16. **Phase tool** — If `advance_phase` present and not wrapup, `nextPhase(session.phase)` (`prompts.js`). **Phase field on session is not used for this reply’s prompt** (already built).
 17. **Persist** — `persistTurn` in `interview.js`:
@@ -198,16 +207,26 @@ Headers: `Authorization: Bearer <clerk_jwt>`, `Content-Type: application/json`.
 }
 ```
 
-**C. Gemini contents (engine)** — roles remapped; system prompt separate:
+**C. Claude request (llmProvider)** — stored roles map 1:1; system prompt separate:
 
 ```js
-// config.systemInstruction = string from buildSystemPrompt(...)
-contents = [
-  { role: "user", parts: [{ text: "[Interview start]" }] },
-  { role: "model", parts: [{ text: "Let's design a URL shortener..." }] },
-  { role: "user", parts: [{ text: "We need ~100M users..." }] }
-]
+client.beta.messages.stream({
+  model: "claude-sonnet-5-5",
+  max_tokens: 16000,
+  output_config: { effort: "low" },
+  system: "...string from buildSystemPrompt(...)",
+  messages: [
+    { role: "user", content: "[Interview start]" },
+    { role: "assistant", content: "Let's design a URL shortener..." },
+    { role: "user", content: "We need ~100M users..." }
+  ],
+  tools: [{ ...ADVANCE_PHASE_TOOL, eager_input_streaming: true }], // omitted in wrapup
+  betas: ["server-side-fallback-2026-07-01"],
+  fallbacks: "default"
+}, { signal })
 ```
+
+Thinking blocks in the response are never stored or replayed (assistant history is text only, D-008).
 
 **D. Stream to browser** — raw `text/plain` chunks (not JSON):
 
@@ -284,27 +303,34 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 
 - **Who:** `InterviewApp.loadProblems` → ProblemPicker.
 - **Validates:** auth only.
-- **Reads:** `Problem.find().select('slug title difficulty prompt')`.
-- **Returns:** `{ problems: [...] }` (no hidden brief fields).
+- **Reads:** `Problem.find().select('slug title difficulty tier prompt')` + `getEntitlement(userId)`.
+- **Returns:** `{ problems: [{ slug, title, difficulty, tier, prompt, locked }] }` (no hidden brief fields). `locked` is true for premium problems without an active pass.
 
 ### `POST /api/sessions` — `sessions.js`
 
-- **Who:** `handlePickProblem` in `App.jsx`.
-- **Validates:** `problemSlug` required; problem must exist.
-- **Writes:** new `Session` (`phase: requirements`, `status: active`, empty messages).
-- **Returns:** `201 { session, problem: publicProblem }`.
+- **Who:** `handleStart` in `App.jsx`, when the candidate clicks "Start interview" (picking a problem only previews it, D-027). The first `/interview` turn follows immediately.
+- **Validates:** `problemSlug` required; problem must exist; `canAccessProblem(problem, getEntitlement(userId))` else **402** `{ code: 'premium_required' }`. Gated here only — existing sessions keep working after a pass expires.
+- **Quota:** after the premium check, `claimInterviewSlot` atomically increments today's `DailyUsage` row if `count < limit` (1 free / 3 premium); otherwise **429** `{ code: 'daily_limit', usage: { limit, used, remaining, resetsAt } }`. If `Session.create` then fails, the slot is released (D-029).
+- **Writes:** new `Session` (`phase: requirements`, `status: active`, empty messages, `timeLimitMinutes` from the user's tier: `FREE_SESSION_MINUTES` default 15, `PREMIUM_SESSION_MINUTES` default 30).
+- **Returns:** `201 { session, problem: publicProblem, timer }`. `timer` is `{ limitMinutes, remainingMs }` from `sessionTimer.js`; `remainingMs` is null until the first turn sets `startedAt`.
 
 ### `GET /api/sessions` — `sessions.js`
 
 - **Who:** `refreshSessions` / Sidebar.
-- **Reads:** `Session.find({ userId }).select(...).sort({ createdAt: -1 })`.
+- **Reads:** `Session.find({ userId }, { ..., messageCount: { $size: '$messages' } }).sort({ createdAt: -1 })`. Sessions with `messageCount: 0` (opening turn failed) show as "not started" so they can be resumed without using another daily slot (D-029).
 - **Returns:** `{ sessions }`.
 
 ### `GET /api/sessions/:id` — `sessions.js`
 
 - **Who:** `loadSession` after turns / resume.
 - **Reads:** session by `_id` + `userId`; public problem fields.
-- **Returns:** `{ session, problem }` or `404`.
+- **Returns:** `{ session, problem, timer }` or `404`. The client turns `timer.remainingMs` into a local deadline (so the user's clock skew doesn't matter), shows a countdown, and calls `/end` itself when it reaches 0, after any streaming reply finishes.
+
+### `DELETE /api/sessions/:id` — `sessions.js`
+
+- **Who:** Sidebar trash icon → `handleDeleteSession` in `App.jsx` (after a `confirmToast` confirmation; the app uses react-toastify for all notices and confirms, never native dialogs). Hidden for the session that is mid-turn or being scored, since those requests would save into a deleted document.
+- **Writes:** `Session.deleteOne({ _id, userId })` — hard delete, no undo.
+- **Returns:** `{ deleted: true }`, or **404** if it isn't the caller's session. If the open session was deleted, the client returns to the problem picker.
 
 ### `PATCH /api/sessions/:id/diagram` — `sessions.js`
 
@@ -322,17 +348,39 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 ### `POST /api/sessions/:id/end` — `sessions.js`
 
 - **Who:** Chat “End interview” → `handleEnd`.
-- **Validates:** ownership; if already completed, returns as-is.
-- **Writes:** `evaluateSession` stub → `status: completed`, optional diagram via serializer; `session.save()`.
-- **Returns:** `{ session }` including stub `evaluation`.
+- **Validates:** ownership; if already completed, returns as-is (no re-evaluation).
+- **Order matters:** if `req.body.diagram` is present, it's applied to `session.diagram` via `buildDiagramContext` **first**; only then is `evaluateSession(session, problem)` called, so the evaluator judges the true final diagram, not a stale one.
+- **Writes:** `evaluateSession` (`server/services/evaluator.js`) — a one-shot Claude call (`llmProvider.generateJson`) scored against the full private brief, transcript, and final diagram summary/observations (`diagramSerializer.buildDiagramContext`); returns `{ scores: { requirements, estimation, tradeoffs, bottlenecks, communication }: { score: 1-5, feedback }, feedback }`, validated by `normalizeEvaluation` and falling back to a safe null-scores response on any shape mismatch or Claude API error or refusal. Then `status: completed`; `session.save()`.
+- **Returns:** `{ session }` including real `evaluation`, which Chat renders as a feedback card (overall average, per-category score and feedback). The client shows "Ending…" and disables the button while the evaluator runs.
 
 ### `POST /api/sessions/:id/interview` — see §4
+
+### `GET /api/billing/status` — `billing.js`
+
+- **Who:** `InterviewApp.loadBilling` → ProblemPicker banner.
+- **Writes:** `reconcilePaidOrders` first — grants any of this user's `paid` Payments missing from `User.appliedOrderIds` (heals a verify that died after marking the payment paid).
+- **Reads:** `User.findOne({ userId })`.
+- **Returns:** `{ isPremium, premiumUntil, billingEnabled, sessionMinutes, pass: { amount, currency, days } }` (amount in paise, from server config). `sessionMinutes` is the time limit a new interview would get, shown before Start. Also `interviews: { day, limit, used, remaining, resetsAt }` (today's quota, read-only) and `premiumDailyInterviews` for the upsell text.
+
+### `POST /api/billing/order` — `billing.js`
+
+- **Who:** `handleUpgrade` in `App.jsx` (Get premium / Unlock buttons).
+- **Validates:** billing configured (else **503**); rate limit 5/min per user (**429**). Body is ignored — amount and days come from `config`.
+- **Writes:** Razorpay order via `paymentProvider.createOrder`; `Payment { status: 'created' }`.
+- **Returns:** `201 { orderId, amount, currency, keyId }` → client opens Razorpay Checkout (`lib/razorpay.js`).
+
+### `POST /api/billing/verify` — `billing.js`
+
+- **Who:** `handleUpgrade`, with Checkout's success payload `{ razorpay_order_id, razorpay_payment_id, razorpay_signature }`.
+- **Validates:** order exists **for this user** (else 404); HMAC-SHA256 signature of `order_id|payment_id` with the key secret (else **400**).
+- **Writes:** `Payment` `created → paid` (no-op if already paid); then `grantPremiumPass(userId, orderId, passDays)` — one atomic pipeline update that sets `User.premiumUntil = max(now, premiumUntil) + passDays` and pushes `orderId` onto `appliedOrderIds`, only if that order isn't applied yet. A replayed verify returns the current entitlement without extending; a retried verify after a failure still grants.
+- **Returns:** `{ isPremium, premiumUntil }`; client then reloads billing status + problems.
 
 ### `npm run seed` → `server/seed/seed.js`
 
 - **Who:** developer CLI (`package.json` → `server` seed script).
 - **Validates:** requires same env as server (`config.js` via `connectDb`).
-- **Writes:** `Problem.findOneAndUpdate({ slug }, problem, { upsert: true })` for each brief in `seed/problems.js`.
+- **Writes:** `Problem.findOneAndUpdate({ slug }, problem, { upsert: true })` for each brief in `seed/problems.js` (including `tier`).
 - **Returns:** console logs; exit 0. Idempotent.
 
 ---
@@ -341,18 +389,26 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 
 | Case | Behavior |
 |------|----------|
-| Gemini fails **before** any chunk | `interview.js` catch → `502 { error: 'Interview model call failed', detail }` if headers not sent as success body. **No** user/assistant messages saved. |
-| Gemini fails / connection drops **after** chunks | Partial `streamedText` saved via `persistTurn` (no phase advance). Response ended. |
-| Client **Stop** / abort | `AbortController` → fetch abort → `req` close → `abortSignal` on Gemini. `runTurn` returns `aborted: true`. Route still `persistTurn` with text so far; `phaseAdvanced` forced false. Client refetches session. |
+| Claude API fails **before** any chunk | `interview.js` catch → `502 { error: 'Interview model call failed', detail }` if headers not sent as success body. **No** user/assistant messages saved. |
+| Claude API fails / connection drops **after** chunks | Partial `streamedText` saved via `persistTurn` (no phase advance). Response ended. |
+| Client **Stop** / abort | `AbortController` → fetch abort → `req` close → SDK request `signal` aborts the Claude stream. `runTurn` returns `aborted: true`. Route still `persistTurn` with text so far; `phaseAdvanced` forced false. Client refetches session. |
 | Someone else’s session id | `findOne({ _id, userId })` → `null` → **404** `{ error: 'Session not found' }` on get/interview/end. |
 | Message > 4000 chars | **400** before LLM. |
 | Empty message after interview started | **400** `Message cannot be empty`. |
 | `messages.length >= 60` | **400** turn limit. |
+| Daily interview limit reached | `POST /sessions` → **429** `daily_limit`; picker and Start box show when it resets. Resuming existing sessions still works. |
+| Turn sent after `startedAt + timeLimitMinutes` + 15s grace | **409** `{ code: 'time_up' }`. The client treats it as time up and auto-ends (D-028). |
 | Rate limit | **429** + `retryAfterMs`. |
 | Session not `active` | **400** `Session is not active`. |
 | Missing env at boot | `config.js` `process.exit(1)` with clear message. |
 | Invalid diagram payload | **400** from serializer (`DiagramValidationError`). |
 | `diagram-context` in production | **404**. |
+| Premium problem without an active pass | `POST /sessions` → **402** `premium_required`; picker shows Unlock instead of Start. |
+| Razorpay keys not set | App boots; `/billing/order` and `/billing/verify` → **503**; premium problems stay locked, banner hidden. |
+| User closes Checkout | `openCheckout` resolves `null`; nothing written beyond the `created` Payment row. |
+| Bad / forged payment signature | `/billing/verify` → **400**; no entitlement change. |
+| Server dies after `Payment` → `paid`, before the `User` grant | Healed automatically: next `GET /billing/status` runs `reconcilePaidOrders` and applies the order once. |
+| Browser closes after paying, before `/verify` | **Known gap (D-025):** charged but not upgraded; `Payment` stays `created`. No webhook yet — reconcile manually. |
 
 ---
 
@@ -362,10 +418,14 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 |-------|----------------|-------------------|
 | Clerk session / JWT | Clerk + browser | User via Clerk UI; `getToken` reads |
 | `view`, `session`, `problem`, `streamingText`, `isStreaming`, `sessions[]`, `problems[]` | React state in `App.jsx` | Client only (refetch overwrites from server) |
+| Dark/light theme | `localStorage['theme']` (per-browser) + `<html data-theme>` | `useTheme` hook (`client/src/lib/theme.js`) via the header toggle |
 | `session.phase`, `status`, `messages`, `diagram`, `evaluation` | Mongo `Session` | Server routes (`interview`, `PATCH diagram`, `end`, create) |
 | Canvas local nodes/edges | React Flow state in `Canvas.jsx` | User draws; autosave patches server |
 | Slim `diagramSnapshot` on user messages | Mongo message field | Interview persist when slim changed |
-| `Problem` briefs | Mongo `Problem` | Seed script (upsert); not mutated by interview API |
+| `Problem` briefs (incl. `tier`) | Mongo `Problem` | Seed script (upsert); not mutated by interview API |
+| Premium entitlement (`premiumUntil`) | Mongo `User` | `grantPremiumPass` from `/billing/verify` and `reconcilePaidOrders` (`/billing/status`) |
+| Razorpay orders | Mongo `Payment` + Razorpay | `/billing/order` creates; `/billing/verify` flips to `paid` |
+| `billing` status, `upgrading` | React state in `App.jsx` | Client only (refetched after verify) |
 | System prompt / phase instructions | Rebuilt each turn in `buildSystemPrompt` | Code in `prompts.js` (not stored) |
 | Rate-limit buckets | Process memory `rateLimit.js` | Server process (lost on restart) |
 | Private brief | Server memory after Problem load; never in client JSON | Seed / DB admins |
@@ -379,14 +439,18 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 | Interviewer personality / hard rules | `server/prompts.js` → `BASE_PERSONA` |
 | Phase goals / exit criteria | `server/prompts.js` → `PHASE_BLOCKS`, `toolsForPhase` |
 | When phase advances (tool schema) | `server/prompts.js` → `ADVANCE_PHASE_TOOL`; detection in `interviewEngine.js` |
-| Gemini model or API key | `server/config.js`, `server/.env` / `.env.example` (`GEMINI_*`); default `gemini-flash-latest` |
-| Streaming / abort / Gemini SDK | `server/services/llmProvider.js` |
+| Claude model or API key | `server/config.js`, `server/.env` / `.env.example` (`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`); default `claude-sonnet-5-5` |
+| Streaming / abort / Anthropic SDK | `server/services/llmProvider.js` |
 | Phase advance + turn assembly | `server/services/interviewEngine.js` |
 | Persist rules / guardrails | `server/routes/interview.js`, `server/lib/rateLimit.js`, `server/lib/diagram.js` |
-| Add a problem | `server/seed/problems.js` then `npm run seed`; schema in `models/Problem.js` |
+| Add a problem | `server/seed/problems.js` (set `tier`) then `npm run seed`; schema in `models/Problem.js` |
+| Premium price / pass length | `PREMIUM_PASS_PRICE_PAISE`, `PREMIUM_PASS_DAYS` in `server/.env` (`server/config.js`) |
+| Payment flow / Razorpay calls | `server/routes/billing.js`, `server/services/paymentProvider.js`, `client/src/lib/razorpay.js` |
+| Who can open which problem | `server/services/entitlements.js` → `canAccessProblem`; enforced in `sessions.js` create route |
 | Session fields / index | `server/models/Session.js` |
 | Auth / ownership | `server/middleware/requireAuth.js`, session queries in `routes/*.js` |
-| Stub → real evaluator | `server/services/evaluator.js`, called from `sessions.js` end route |
+| Evaluator rubric / scoring prompt | `server/services/evaluator.js`, `server/prompts.js` → `buildEvaluationPrompt`, `EVALUATOR_PERSONA`; called from `sessions.js` end route |
+| Dark/light theme | `client/src/lib/theme.js`, `client/src/index.css` (`@custom-variant dark`), `client/index.html` (pre-hydration script), toggle in `App.jsx` |
 | Chat UX / phase badge | `client/src/components/Chat.jsx` |
 | Streaming client loop | `client/src/App.jsx` → `runInterviewTurn` |
 | API helpers | `client/src/lib/api.js` |

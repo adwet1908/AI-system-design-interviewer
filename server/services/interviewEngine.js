@@ -5,6 +5,9 @@ import {
   toolsForPhase,
 } from '../prompts.js';
 
+const REFUSAL_REPLY =
+  "I can't help with that one. Let's get back to the design: where would you like to pick up?";
+
 /**
  * Transport-agnostic interview turn.
  * Streams text via onText(chunk). No Express / req / res here.
@@ -16,6 +19,7 @@ import {
  * @param {string} params.userText
  * @param {object} [params.diagram] - legacy; prefer diagramPromptBlock
  * @param {string} [params.diagramPromptBlock] - prebuilt diagram section for the system prompt
+ * @param {number|null} [params.minutesLeft] - time left in the interview, null when unlimited
  * @param {(chunk: string) => void} params.onText
  * @param {{ signal?: AbortSignal }} [params.options]
  */
@@ -25,6 +29,7 @@ export async function runTurn({
   userText,
   diagram,
   diagramPromptBlock,
+  minutesLeft,
   onText,
   options = {},
 }) {
@@ -33,6 +38,8 @@ export async function runTurn({
     phase: session.phase,
     diagram,
     diagramPromptBlock,
+    minutesLeft,
+    timeLimitMinutes: session.timeLimitMinutes,
   });
 
   const history = (session.messages || []).map((m) => ({
@@ -48,7 +55,7 @@ export async function runTurn({
     messages.push({
       role: 'user',
       content:
-        '[Interview start. Greet the candidate briefly and present the problem. Do not reveal hidden requirements.]',
+        '[Interview start. The candidate can already see the problem prompt, so do not restate it. Greet them in one sentence and ask what they want to clarify. Do not reveal hidden requirements.]',
     });
   } else {
     throw new Error('Empty message');
@@ -74,11 +81,18 @@ export async function runTurn({
     };
   }
 
+  let assistantText = result.text;
+  if (result.refused && !assistantText.trim()) {
+    // The model (and its fallback) declined this turn; keep the interview going.
+    assistantText = REFUSAL_REPLY;
+    if (typeof onText === 'function') onText(assistantText);
+  }
+
   let phaseAdvanced = false;
   let advancedTo = null;
   let advanceReason = null;
 
-  if (session.phase !== 'wrapup') {
+  if (session.phase !== 'wrapup' && !result.refused) {
     const toolUse = (result.functionCalls || []).find(
       (fc) => fc.name === 'advance_phase'
     );
@@ -95,7 +109,7 @@ export async function runTurn({
   }
 
   return {
-    assistantText: result.text,
+    assistantText,
     phaseAdvanced,
     nextPhase: advancedTo,
     advanceReason,

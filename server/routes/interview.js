@@ -9,6 +9,7 @@ import {
 } from '../services/diagramSerializer.js';
 import { diagramsEqual, lastDiagramSnapshot } from '../lib/diagram.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { isPastDeadline, minutesLeft } from '../services/sessionTimer.js';
 
 const router = Router();
 
@@ -17,19 +18,35 @@ const MAX_MESSAGES = 60;
 const RATE_LIMIT = 30;
 const RATE_WINDOW_MS = 60_000;
 
+/**
+ * Append the user message and the assistant reply in one save.
+ * The user message is stored only after the model answers: a failed call leaves
+ * history untouched, so the candidate can just resend.
+ * The diagram snapshot rides on the user message, and only when it changed since
+ * the last one, to keep the transcript small (see lastDiagramSnapshot).
+ * A phase advance is recorded on the reply that triggered it and takes effect
+ * from the next turn's system prompt.
+ */
 async function persistTurn({
   session,
   message,
   persistedDiagram,
   slimJson,
   phaseAtTurn,
+  turnStartedAt,
   assistantText,
   phaseAdvanced,
   nextPhaseName,
   advanceReason,
 }) {
+  // The time limit counts from the first turn, not from session creation.
+  if (!session.startedAt) session.startedAt = turnStartedAt;
+
   const userMsg = {
     role: 'user',
+    // The opening turn has no user text. A placeholder keeps history alternating
+    // user/assistant (the API requires a user message first); the UI renders it
+    // as a divider.
     content: message.trim() ? message : '[Interview start]',
     phase: phaseAtTurn,
     at: new Date(),
@@ -105,6 +122,16 @@ router.post('/sessions/:id/interview', async (req, res) => {
     return res.status(400).json({ error: 'Session is not active' });
   }
 
+  // Server-side enforcement: the client auto-ends at the limit, but a modified
+  // client must not be able to keep the (paid-for) model talking.
+  const turnStartedAt = new Date();
+  if (isPastDeadline(session, turnStartedAt.getTime())) {
+    return res.status(409).json({
+      error: 'Time is up for this interview. End it to see your score.',
+      code: 'time_up',
+    });
+  }
+
   if (session.messages.length >= MAX_MESSAGES) {
     return res.status(400).json({
       error: `Session turn limit reached (${MAX_MESSAGES} messages). End the interview.`,
@@ -144,6 +171,9 @@ router.post('/sessions/:id/interview', async (req, res) => {
   const { slimJson, promptBlock, persistedDiagram } = diagramContext;
   const phaseAtTurn = session.phase;
 
+  // If the browser goes away (Stop button, tab closed), abort the model call so we
+  // stop paying for tokens nobody will read. writableEnded guards against the
+  // 'close' that fires after a normal finish.
   const abortController = new AbortController();
   const onClose = () => {
     if (!res.writableEnded) abortController.abort();
@@ -153,6 +183,9 @@ router.post('/sessions/:id/interview', async (req, res) => {
   let streamedText = '';
   let startedStreaming = false;
 
+  // The reply streams as raw text chunks (no SSE framing). Headers aren't flushed
+  // until the first write, so an error before any text can still become a JSON
+  // 502 below; after that, the status is committed and we can only end the stream.
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -163,6 +196,8 @@ router.post('/sessions/:id/interview', async (req, res) => {
       problem,
       userText: message,
       diagramPromptBlock: promptBlock,
+      // The opening turn starts the clock, so it gets the full limit.
+      minutesLeft: session.startedAt ? minutesLeft(session) : session.timeLimitMinutes,
       onText: (chunk) => {
         startedStreaming = true;
         streamedText += chunk;
@@ -185,6 +220,7 @@ router.post('/sessions/:id/interview', async (req, res) => {
       persistedDiagram,
       slimJson,
       phaseAtTurn,
+      turnStartedAt,
       assistantText,
       phaseAdvanced: Boolean(result.phaseAdvanced) && !result.aborted,
       nextPhaseName: result.nextPhase,
@@ -195,6 +231,8 @@ router.post('/sessions/:id/interview', async (req, res) => {
   } catch (err) {
     console.error('Interview turn failed:', err);
 
+    // The candidate already saw part of a reply. Save what they saw (without a phase
+    // advance) so the transcript matches the screen and the next turn has context.
     if (startedStreaming && streamedText) {
       try {
         await persistTurn({
@@ -203,6 +241,7 @@ router.post('/sessions/:id/interview', async (req, res) => {
           persistedDiagram,
           slimJson,
           phaseAtTurn,
+          turnStartedAt,
           assistantText: streamedText,
           phaseAdvanced: false,
           nextPhaseName: null,
