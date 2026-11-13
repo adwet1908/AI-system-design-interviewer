@@ -15,7 +15,7 @@ const devAuth = Boolean(process.env.DEV_AUTH_USER_ID);
 app.use(helmet());
 app.use(
   cors({
-    origin: config.clientOrigin,
+    origin: config.clientOrigins,
     credentials: true,
   })
 );

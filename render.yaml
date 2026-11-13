@@ -1,0 +1,32 @@
+# Render Blueprint for the API. The client deploys separately on Vercel.
+# Secrets are sync: false: Render asks for them on first deploy and never
+# reads them from this file.
+services:
+  - type: web
+    name: ai-interviewer-api
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    # Deploy a commit on main only after GitHub CI passes on it.
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false

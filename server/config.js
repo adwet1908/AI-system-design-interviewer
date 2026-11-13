@@ -28,7 +28,11 @@ if (missing.length > 0) {
 
 export const config = {
   port: Number(process.env.PORT) || 3001,
-  clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  // Comma-separated, e.g. "https://app.vercel.app,http://localhost:5173".
+  clientOrigins: (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   anthropicModel: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
   mongodbUri: process.env.MONGODB_URI,
