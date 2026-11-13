@@ -7,7 +7,7 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "seed": "node seed/seed.js",
-    "test": "node --test services/**/*.test.js"
+    "test": "node --test \"services/**/*.test.js\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
