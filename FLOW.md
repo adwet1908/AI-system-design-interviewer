@@ -1,6 +1,6 @@
 # System flow map
 
-**Last verified against commit `c0c1fad` + uncommitted D-025 billing, D-026 Claude migration, D-027 session-on-start, D-028 time limits, D-029 daily quota and D-030 background scoring.**  
+**Last verified against commit `d4c7de2` + uncommitted D-031 security hardening.**  
 Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (product rules).
 
 ---
@@ -107,7 +107,7 @@ sequenceDiagram
 
 1. Client: `useAuth().getToken()` in `InterviewApp` (`client/src/App.jsx`).
 2. Client: `apiFetch` / `apiJson` set `Authorization: Bearer ${token}` (`client/src/lib/api.js`).
-3. Server: `clerkMiddleware()` on all routes after `/health` when `DEV_AUTH_USER_ID` is unset (`server/server.js`).
+3. Server: `clerkMiddleware()` on all routes after `/health` when `DEV_AUTH_USER_ID` is unset (`server/server.js`). `config.js` refuses to boot if `DEV_AUTH_USER_ID` is set with `NODE_ENV=production`.
 4. Server: `app.use('/api', requireAuth)` (`server/middleware/requireAuth.js`).
 5. Handlers call `getUserId(req)` and pass that into every `Session.find*` filter. Never from `req.body`.
 
@@ -398,10 +398,13 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 
 | Case | Behavior |
 |------|----------|
-| Claude API fails **before** any chunk | `interview.js` catch → `502 { error: 'Interview model call failed', detail }` if headers not sent as success body. **No** user/assistant messages saved. |
+| Claude API fails **before** any chunk | `interview.js` catch → `502 { error: 'Interview model call failed' }` if headers not sent as success body (cause is logged server-side, never sent). **No** user/assistant messages saved. |
 | Claude API fails / connection drops **after** chunks | Partial `streamedText` saved via `persistTurn` (no phase advance). Response ended. |
 | Client **Stop** / abort | `AbortController` → fetch abort → `req` close → SDK request `signal` aborts the Claude stream. `runTurn` returns `aborted: true`. Route still `persistTurn` with text so far; `phaseAdvanced` forced false. Client refetches session. |
 | Someone else’s session id | `findOne({ _id, userId })` → `null` → **404** `{ error: 'Session not found' }` on get/interview/end. |
+| Malformed session id (not an ObjectId) | `router.param('id', validateSessionId)` → **404** `{ error: 'Session not found' }` before any query. |
+| Unknown `/api` route | **404** JSON `{ error: 'Not found' }`. |
+| Uncaught error in a handler | Global handler in `server.js`: 5xx → logged, `{ error: 'Internal server error' }`; 4xx (e.g. malformed JSON body) → status kept, JSON `{ error }`. |
 | Message > 4000 chars | **400** before LLM. |
 | Empty message after interview started | **400** `Message cannot be empty`. |
 | `messages.length >= 60` | **400** turn limit. |

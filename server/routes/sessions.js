@@ -19,8 +19,10 @@ import {
   releaseInterviewSlot,
 } from '../services/usageQuota.js';
 import { config } from '../config.js';
+import { validateSessionId } from '../middleware/validateId.js';
 
 const router = Router();
+router.param('id', validateSessionId);
 
 function publicProblem(problem) {
   if (!problem) return null;
