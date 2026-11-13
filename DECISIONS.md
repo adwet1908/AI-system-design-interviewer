@@ -4,6 +4,17 @@ Newest decisions at the top. Do not delete entries; mark them Superseded instead
 
 ---
 
+## D-032 — Deploy: client on Vercel, API on Render
+
+- **Date:** 2026-11-13
+- **Status:** Active
+- **What changed:** new `render.yaml` (Render Blueprint for the API: `rootDir: server`, `/health` check, `NODE_ENV=production`, secrets as `sync: false`, deploys only after GitHub CI passes); `server/package.json` (`engines.node: 24.x`, same as CI); `server/config.js` (`CLIENT_ORIGIN` accepts a comma-separated list, now `config.clientOrigins`, trailing slashes stripped); `server/server.js` (CORS uses the list).
+- **Why:** Get a live demo up on free tiers. The client is a static Vite build with no client-side routing, which suits Vercel with no config. The API needs a long-running process for streaming and in-process background scoring (D-030), which rules out serverless functions; Render runs it as a normal web service. Several origins let one API serve the deployed client and local dev.
+- **Alternatives considered:** Serving the client from Express on Render (one service, but loses Vercel's CDN and preview deploys, and helmet's CSP would need tuning). Railway or Fly.io (similar; Render's free tier and Blueprint file were the simplest). Vercel serverless for the API (streaming and the background job don't fit request-scoped functions).
+- **Tradeoffs:** Render's free tier sleeps after ~15 min idle, so the first request after that takes ~30-60s. Polling during scoring keeps it awake while a job runs. Free instances have no static outbound IP, so Atlas must allow `0.0.0.0/0` (auth still requires the URI credentials). Still one instance, so the in-memory rate limiter and in-process jobs remain correct. Vercel preview URLs are not in `CLIENT_ORIGIN`, so previews can't call the API unless added.
+
+---
+
 ## D-031 — Security hardening before deploy
 
 - **Date:** 2026-11-13
