@@ -4,6 +4,17 @@ Newest decisions at the top. Do not delete entries; mark them Superseded instead
 
 ---
 
+## D-030 — End interview atomically; score in the background with retry
+
+- **Date:** 2026-11-08
+- **Status:** Active (supersedes D-023's "fall back to null scores" behaviour)
+- **What changed:** `server/models/Session.js` (status `evaluating`; `evaluationStartedAt`, `evaluationError`); new `server/services/evaluationJob.js` (`runEvaluation`, `startEvaluation`, `claimStaleEvaluation`); `server/services/evaluator.js` (`evaluateSession` throws instead of returning placeholder scores); `server/routes/sessions.js` (`/end` claims atomically and returns 202; new `POST /sessions/:id/evaluate`; `GET /sessions/:id` restarts orphaned jobs); `server/routes/interview.js` (`persistTurn` is a conditional `updateOne`); client `App.jsx` (polling, retry), `Chat.jsx` (`evaluating` state, retry card).
+- **Why:** HLD review findings. (1) `/end` and turns were load-then-save, so a double End scored twice, and a turn finishing after End landed in a completed session; the time-limit auto-end made these races likely. (2) Scoring blocked the request for 20-60s, which hosting proxies cut off. (3) One Claude failure stored null scores permanently with no retry.
+- **Alternatives considered:** A job queue (BullMQ/Redis) — more infrastructure than one job type needs; Mongo already holds the state. Server-sent events instead of polling — polling every 3s for under a minute is simpler and survives reloads. Blocking End while a turn streams — the conditional write covers it without coupling the two routes.
+- **Tradeoffs:** The job runs in the web process: a restart mid-job leaves the session `evaluating` until someone opens it 5+ minutes later (then it restarts automatically). A score taking over 5 minutes could be started twice by a poll (both writes are conditional, so the last one wins; costs one extra Claude call). A reply that streams past the end is shown to the user but not saved. Sessions scored before this change with placeholder null scores have no `evaluationError`, so they can't be re-scored from the UI.
+
+---
+
 ## D-029 — Daily interview quota: 1 a day free, 3 a day premium
 
 - **Date:** 2026-11-08

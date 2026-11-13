@@ -39,8 +39,6 @@ async function persistTurn({
   nextPhaseName,
   advanceReason,
 }) {
-  // The time limit counts from the first turn, not from session creation.
-  if (!session.startedAt) session.startedAt = turnStartedAt;
 
   const userMsg = {
     role: 'user',
@@ -57,8 +55,6 @@ async function persistTurn({
     userMsg.diagramSnapshot = slimJson;
   }
 
-  session.messages.push(userMsg);
-
   const assistantMsg = {
     role: 'assistant',
     content: assistantText || '',
@@ -66,6 +62,7 @@ async function persistTurn({
     at: new Date(),
   };
 
+  const set = { diagram: persistedDiagram };
   if (phaseAdvanced && nextPhaseName) {
     assistantMsg.event = {
       type: 'phase_advanced',
@@ -73,12 +70,21 @@ async function persistTurn({
         advanceReason ? `: ${advanceReason}` : ''
       }`,
     };
-    session.phase = nextPhaseName;
+    set.phase = nextPhaseName;
   }
+  // The time limit counts from the first turn, not from session creation.
+  if (!session.startedAt) set.startedAt = turnStartedAt;
 
-  session.diagram = persistedDiagram;
-  session.messages.push(assistantMsg);
-  await session.save();
+  // Conditional on still being active: if the interview was ended while this
+  // reply streamed, the turn is dropped instead of landing after the score.
+  // (session.save() would write unconditionally.)
+  const result = await Session.updateOne(
+    { _id: session._id, status: 'active' },
+    { $push: { messages: { $each: [userMsg, assistantMsg] } }, $set: set }
+  );
+  if (result.matchedCount === 0) {
+    console.warn(`Turn for session ${session._id} dropped: session no longer active`);
+  }
 }
 
 router.post('/sessions/:id/interview', async (req, res) => {

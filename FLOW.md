@@ -1,6 +1,6 @@
 # System flow map
 
-**Last verified against commit `c0c1fad` + uncommitted D-025 billing, D-026 Claude migration, D-027 session-on-start, D-028 time limits and D-029 daily quota.**  
+**Last verified against commit `c0c1fad` + uncommitted D-025 billing, D-026 Claude migration, D-027 session-on-start, D-028 time limits, D-029 daily quota and D-030 background scoring.**  
 Read with [DECISIONS.md](./DECISIONS.md) (why) and [CONTEXT.md](./CONTEXT.md) (product rules).
 
 ---
@@ -347,11 +347,20 @@ Private brief fields (`hiddenRequirements`, etc.) are **not** in `problem` here 
 
 ### `POST /api/sessions/:id/end` — `sessions.js`
 
-- **Who:** Chat “End interview” → `handleEnd`.
-- **Validates:** ownership; if already completed, returns as-is (no re-evaluation).
-- **Order matters:** if `req.body.diagram` is present, it's applied to `session.diagram` via `buildDiagramContext` **first**; only then is `evaluateSession(session, problem)` called, so the evaluator judges the true final diagram, not a stale one.
-- **Writes:** `evaluateSession` (`server/services/evaluator.js`) — a one-shot Claude call (`llmProvider.generateJson`) scored against the full private brief, transcript, and final diagram summary/observations (`diagramSerializer.buildDiagramContext`); returns `{ scores: { requirements, estimation, tradeoffs, bottlenecks, communication }: { score: 1-5, feedback }, feedback }`, validated by `normalizeEvaluation` and falling back to a safe null-scores response on any shape mismatch or Claude API error or refusal. Then `status: completed`; `session.save()`.
-- **Returns:** `{ session }` including real `evaluation`, which Chat renders as a feedback card (overall average, per-category score and feedback). The client shows "Ending…" and disables the button while the evaluator runs.
+- **Who:** Chat “End interview” → `handleEnd`, or the time-limit auto-end.
+- **Validates:** the final `req.body.diagram` (if any) via `buildDiagramContext` **before** claiming, so a bad payload can't half-end the session.
+- **Claim (atomic):** `findOneAndUpdate({ _id, userId, status: 'active' }, { status: 'evaluating', evaluationStartedAt: now, diagram })`. Only one request can win, so double clicks, two tabs, or auto-end racing the button score once (D-030).
+- **Returns:** winner → **202** `{ session }` (status `evaluating`) immediately, then `evaluationJob.startEvaluation` runs in the background. Loser / already ended → **200** `{ session }` as it is now. Not yours → **404**.
+- **Background job** (`server/services/evaluationJob.js` → `evaluateSession` in `evaluator.js`): one Claude call (`llmProvider.generateJson`, effort `high`, JSON schema) over the private brief, transcript and final diagram summary/observations, validated by `normalizeEvaluation`. Success → `status: completed`, `evaluation`. Any failure (API error, refusal, bad shape) → `status: completed`, `evaluationError` (no placeholder scores). Both writes are conditional on `status: 'evaluating'`.
+- **Client:** while the open session is `evaluating`, App polls `GET /sessions/:id` every 3s; on completion it shows the feedback card and a toast, or the error with "Try scoring again".
+- **Turns vs end:** `persistTurn` writes with `updateOne({ _id, status: 'active' }, { $push, $set })`, so a reply that finishes after the end is dropped instead of landing after the score.
+- **Restart safety:** job state lives in Mongo. `GET /sessions/:id` on an `evaluating` session older than 5 minutes atomically re-claims it (`claimStaleEvaluation`) and restarts the job.
+
+### `POST /api/sessions/:id/evaluate` — `sessions.js`
+
+- **Who:** "Try scoring again" on a failed score → `handleRetryScoring`.
+- **Claim:** `{ status: 'completed', evaluationError: { $ne: null } }` → `evaluating`, then the same background job. **202** `{ session }`.
+- **Otherwise:** already scored or a retry already running → **200** current session; still `active` → **409**; not yours → **404**.
 
 ### `POST /api/sessions/:id/interview` — see §4
 

@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { Session } from '../models/Session.js';
 import { Problem } from '../models/Problem.js';
 import { getUserId } from '../middleware/requireAuth.js';
-import { evaluateSession } from '../services/evaluator.js';
+import {
+  claimStaleEvaluation,
+  startEvaluation,
+} from '../services/evaluationJob.js';
 import {
   buildDiagramContext,
   DiagramValidationError,
@@ -154,13 +157,23 @@ router.get('/sessions', async (req, res) => {
 router.get('/sessions/:id', async (req, res) => {
   try {
     const userId = getUserId(req);
-    const session = await Session.findOne({
+    let session = await Session.findOne({
       _id: req.params.id,
       userId,
     }).lean();
 
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // The client polls this while scoring runs. If the job was orphaned by a
+    // restart, the first poll after it goes stale restarts it.
+    if (session.status === 'evaluating') {
+      const reclaimed = await claimStaleEvaluation(session._id, userId);
+      if (reclaimed) {
+        session = reclaimed;
+        startEvaluation(session._id);
+      }
     }
 
     const problem = await Problem.findOne({ slug: session.problemSlug })
@@ -269,23 +282,13 @@ router.patch('/sessions/:id/diagram', async (req, res) => {
 router.post('/sessions/:id/end', async (req, res) => {
   try {
     const userId = getUserId(req);
-    const session = await Session.findOne({
-      _id: req.params.id,
-      userId,
-    });
 
-    if (!session) {
-      return res.status(404).json({ error: 'Session not found' });
-    }
-
-    if (session.status === 'completed') {
-      return res.json({ session });
-    }
-
+    // Validate the final diagram before claiming, so a bad payload can't leave
+    // the session half-ended.
+    let finalDiagram = null;
     if (req.body?.diagram) {
       try {
-        const ctx = buildDiagramContext(req.body.diagram, null);
-        session.diagram = ctx.persistedDiagram;
+        finalDiagram = buildDiagramContext(req.body.diagram, null).persistedDiagram;
       } catch (err) {
         if (err instanceof DiagramValidationError) {
           return res.status(400).json({ error: err.message });
@@ -294,17 +297,65 @@ router.post('/sessions/:id/end', async (req, res) => {
       }
     }
 
-    const problem = await Problem.findOne({ slug: session.problemSlug }).lean();
-    const evaluation = await evaluateSession(session, problem);
+    // Atomic claim: only one request can move active -> evaluating, so a double
+    // click, two tabs, or the timer's auto-end racing the button score once.
+    const claimed = await Session.findOneAndUpdate(
+      { _id: req.params.id, userId, status: 'active' },
+      {
+        $set: {
+          status: 'evaluating',
+          evaluationStartedAt: new Date(),
+          evaluationError: null,
+          ...(finalDiagram ? { diagram: finalDiagram } : {}),
+        },
+      },
+      { new: true }
+    ).lean();
 
-    session.status = 'completed';
-    session.evaluation = evaluation;
-    await session.save();
+    if (claimed) {
+      startEvaluation(claimed._id);
+      return res.status(202).json({ session: claimed });
+    }
 
+    // Lost the race or already ended: report the current state.
+    const session = await Session.findOne({ _id: req.params.id, userId }).lean();
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
     res.json({ session });
   } catch (err) {
     console.error('End session failed:', err);
     res.status(500).json({ error: 'Failed to end session' });
+  }
+});
+
+// Retry scoring after a failure. Same atomic claim, from completed-with-error.
+router.post('/sessions/:id/evaluate', async (req, res) => {
+  try {
+    const userId = getUserId(req);
+    const claimed = await Session.findOneAndUpdate(
+      { _id: req.params.id, userId, status: 'completed', evaluationError: { $ne: null } },
+      { $set: { status: 'evaluating', evaluationStartedAt: new Date(), evaluationError: null } },
+      { new: true }
+    ).lean();
+
+    if (claimed) {
+      startEvaluation(claimed._id);
+      return res.status(202).json({ session: claimed });
+    }
+
+    const session = await Session.findOne({ _id: req.params.id, userId }).lean();
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    if (session.status === 'active') {
+      return res.status(409).json({ error: 'End the interview before scoring it' });
+    }
+    // Already scored, or a retry is already running.
+    res.json({ session });
+  } catch (err) {
+    console.error('Retry evaluation failed:', err);
+    res.status(500).json({ error: 'Failed to restart scoring' });
   }
 });
 

@@ -112,6 +112,7 @@ export default function Chat({
   timeUp,
   quota,
   outOfInterviews,
+  onRetryScoring,
 }) {
   const [draft, setDraft] = useState('');
   const listRef = useRef(null);
@@ -119,17 +120,20 @@ export default function Chat({
   const messages = session?.messages || [];
   const hasStarted = messages.length > 0 || Boolean(streamingText);
   const isCompleted = session?.status === 'completed';
+  // Ended = no more turns; scoring may still be running in the background.
+  const isEnded = isCompleted || session?.status === 'evaluating';
+  const isScoring = ending || session?.status === 'evaluating';
 
   // Scroll only the message list: scrollIntoView also scrolls every ancestor,
   // which shifted the whole page.
   useEffect(() => {
     const list = listRef.current;
     if (list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
-  }, [messages, streamingText, isCompleted, ending]);
+  }, [messages, streamingText, isEnded, isScoring]);
 
   function handleSubmit(e) {
     e.preventDefault();
-    if (!draft.trim() || isStreaming || isCompleted) return;
+    if (!draft.trim() || isStreaming || isEnded) return;
     const text = draft;
     setDraft('');
     onSend(text);
@@ -156,8 +160,8 @@ export default function Chat({
             {session?.status && (
               <span className="text-xs text-slate-500 dark:text-slate-400">{session.status}</span>
             )}
-            {!isCompleted && deadline != null && <Countdown deadline={deadline} />}
-            {!isCompleted && deadline == null && timeLimit && (
+            {!isEnded && deadline != null && <Countdown deadline={deadline} />}
+            {!isEnded && deadline == null && timeLimit && (
               <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                 <Clock size={12} />
                 {timeLimit} min
@@ -168,7 +172,7 @@ export default function Chat({
         <button
           type="button"
           onClick={onEnd}
-          disabled={!session || isCompleted || isStreaming || ending}
+          disabled={!session || isEnded || isStreaming || ending}
           className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           {ending ? 'Ending…' : 'End interview'}
@@ -183,7 +187,7 @@ export default function Chat({
           </div>
         )}
 
-        {!hasStarted && !isCompleted && (
+        {!hasStarted && !isEnded && (
           <div className="rounded-md border border-dashed border-slate-300 px-4 py-6 text-center dark:border-slate-600">
             <p className="text-sm text-slate-600 dark:text-slate-400">
               Ready when you are. The interviewer will open with the problem.
@@ -255,13 +259,26 @@ export default function Chat({
           </div>
         )}
 
-        {ending && (
+        {isScoring && (
           <p className="rounded-md border border-dashed border-slate-300 px-4 py-3 text-center text-sm text-slate-500 dark:border-slate-600 dark:text-slate-400">
             {timeUp ? "Time's up. " : ''}Scoring your interview. This can take up to a minute…
           </p>
         )}
 
-        {isCompleted && <EvaluationCard evaluation={session.evaluation} />}
+        {isCompleted && !session.evaluationError && <EvaluationCard evaluation={session.evaluation} />}
+
+        {isCompleted && session.evaluationError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/60 dark:bg-red-950/40">
+            <p className="text-red-800 dark:text-red-200">{session.evaluationError}</p>
+            <button
+              type="button"
+              onClick={onRetryScoring}
+              className="mt-3 rounded-md bg-slate-900 px-3 py-1.5 font-medium text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300"
+            >
+              Try scoring again
+            </button>
+          </div>
+        )}
 
       </div>
 
@@ -273,10 +290,10 @@ export default function Chat({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={isStreaming || isCompleted || ending || timeUp || !hasStarted}
+          disabled={isStreaming || isEnded || ending || timeUp || !hasStarted}
           rows={2}
           placeholder={
-            isCompleted
+            isEnded
               ? 'Interview ended'
               : timeUp
                 ? "Time's up"
@@ -297,7 +314,7 @@ export default function Chat({
         ) : (
           <button
             type="submit"
-            disabled={!draft.trim() || isCompleted || timeUp || !hasStarted}
+            disabled={!draft.trim() || isEnded || timeUp || !hasStarted}
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300"
           >
             Send

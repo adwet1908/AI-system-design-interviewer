@@ -18,6 +18,7 @@ const CANVAS_WIDTH_KEY = 'canvasWidthPct';
 const DEFAULT_CANVAS_PCT = 42;
 const MIN_CANVAS_PCT = 25;
 const MAX_CANVAS_PCT = 80;
+const POLL_SCORING_MS = 3000;
 
 function clampCanvasPct(pct) {
   return Math.min(MAX_CANVAS_PCT, Math.max(MIN_CANVAS_PCT, pct));
@@ -396,15 +397,59 @@ function InterviewApp() {
           diagram: diagramRef.current || session.diagram || { nodes: [], edges: [] },
         }),
       });
+      // Usually 'evaluating' now; the polling effect below picks up the score.
       setSession(data.session);
       await refreshSessions();
-      notifySuccess('Interview scored. Your feedback is in the chat.', `scored-${data.session?._id}`);
     } catch (err) {
       notifyError(err);
     } finally {
       setEnding(false);
     }
   }
+
+  async function handleRetryScoring() {
+    if (!session?._id) return;
+    try {
+      const token = await withToken();
+      const data = await apiJson(`/api/sessions/${session._id}/evaluate`, { token, method: 'POST' });
+      setSession(data.session);
+      await refreshSessions();
+    } catch (err) {
+      notifyError(err);
+    }
+  }
+
+  // Scoring runs in the background on the server (D-030). While the open session
+  // is 'evaluating', poll it. The effect re-runs per session, and cleanup stops
+  // a stale poll from writing into a session the user has navigated away from.
+  useEffect(() => {
+    if (session?.status !== 'evaluating') return undefined;
+    const id = session._id;
+    let cancelled = false;
+
+    const timer = setInterval(async () => {
+      try {
+        const token = await withToken();
+        const data = await apiJson(`/api/sessions/${id}`, { token });
+        if (cancelled || data.session?.status === 'evaluating') return;
+        setSession(data.session);
+        refreshSessions();
+        if (data.session?.evaluationError) {
+          notifyError(data.session.evaluationError, `score-failed-${id}`);
+        } else {
+          notifySuccess('Interview scored. Your feedback is in the chat.', `scored-${id}`);
+        }
+      } catch (err) {
+        // Transient network errors: keep polling.
+        console.error(err);
+      }
+    }, POLL_SCORING_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [session?._id, session?.status, withToken, refreshSessions]);
 
   // Only matters before a session exists: resuming one never uses a new slot.
   const outOfInterviews = !session && billing?.interviews?.remaining === 0;
@@ -453,6 +498,7 @@ function InterviewApp() {
                 ending={ending}
                 quota={session ? null : billing?.interviews}
                 outOfInterviews={outOfInterviews}
+                onRetryScoring={handleRetryScoring}
                 deadline={deadline}
                 timeLimit={timeLimit ?? billing?.sessionMinutes ?? null}
                 timeUp={timeUp}

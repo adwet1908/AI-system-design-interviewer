@@ -41,12 +41,6 @@ export const EVALUATION_SCHEMA = {
   additionalProperties: false,
 };
 
-const FALLBACK_EVALUATION = {
-  scores: Object.fromEntries(EVALUATION_CATEGORIES.map((key) => [key, null])),
-  feedback:
-    'Evaluation could not be generated. Your transcript and diagram were saved.',
-};
-
 /**
  * Validates and normalizes a parsed evaluation payload.
  * Returns null if the shape is unusable, so the caller can fall back.
@@ -75,29 +69,28 @@ export function normalizeEvaluation(parsed) {
   return { scores, feedback: parsed.feedback };
 }
 
+/**
+ * Throws on any failure (API error, refusal, bad shape). The caller records the
+ * failure so the user can retry, rather than storing placeholder scores.
+ */
 export async function evaluateSession(session, problem) {
-  try {
-    const diagramContext = buildDiagramContext(session.diagram, null);
-    const prompt = buildEvaluationPrompt({
-      problem,
-      session,
-      diagramSummary: diagramContext.summaryText,
-      diagramObservations: diagramContext.observationsText,
-    });
+  const diagramContext = buildDiagramContext(session.diagram, null);
+  const prompt = buildEvaluationPrompt({
+    problem,
+    session,
+    diagramSummary: diagramContext.summaryText,
+    diagramObservations: diagramContext.observationsText,
+  });
 
-    const raw = await generateJson({
-      systemInstruction: prompt.systemInstruction,
-      messages: prompt.messages,
-      responseSchema: EVALUATION_SCHEMA,
-    });
+  const raw = await generateJson({
+    systemInstruction: prompt.systemInstruction,
+    messages: prompt.messages,
+    responseSchema: EVALUATION_SCHEMA,
+  });
 
-    const normalized = normalizeEvaluation(JSON.parse(raw));
-    if (!normalized) {
-      throw new Error('Evaluation response failed shape validation');
-    }
-    return normalized;
-  } catch (err) {
-    console.error('Evaluation failed:', err);
-    return FALLBACK_EVALUATION;
+  const normalized = normalizeEvaluation(JSON.parse(raw));
+  if (!normalized) {
+    throw new Error('Evaluation response failed shape validation');
   }
+  return normalized;
 }

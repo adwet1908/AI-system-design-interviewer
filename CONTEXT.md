@@ -73,7 +73,7 @@ Session {
   userId,            // Clerk user id
   problemSlug,
   phase,             // one of the phases above
-  status,            // "active" | "completed"
+  status,            // "active" | "evaluating" (ended, scoring in background) | "completed"
   timeLimitMinutes,  // 15 free / 30 premium, fixed at creation; null on pre-limit sessions (unlimited)
   startedAt,         // first turn; the time limit counts from here
   messages: [{
@@ -86,6 +86,8 @@ Session {
   }],
   diagram: { nodes: [], edges: [] }, // latest canvas state
   evaluation: { scores: {}, feedback: "" },
+  evaluationStartedAt, // when the current scoring run was claimed (orphan detection)
+  evaluationError,   // set when scoring failed; completed but re-scorable
   createdAt, updatedAt
 }
 

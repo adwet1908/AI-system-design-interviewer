@@ -38,7 +38,8 @@ const sessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'completed'],
+      // evaluating: ended, background scoring in progress (D-030).
+      enum: ['active', 'evaluating', 'completed'],
       default: 'active',
     },
     // Set at creation from the user's tier; null on sessions from before limits.
@@ -54,6 +55,10 @@ const sessionSchema = new mongoose.Schema(
       scores: { type: mongoose.Schema.Types.Mixed, default: {} },
       feedback: { type: String, default: '' },
     },
+    // When the current scoring run was claimed; used to detect orphaned jobs.
+    evaluationStartedAt: { type: Date, default: null },
+    // Set when scoring failed; the session is completed but can be re-scored.
+    evaluationError: { type: String, default: null },
   },
   { timestamps: true }
 );
