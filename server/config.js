@@ -11,6 +11,13 @@ const required = [
 
 const missing = required.filter((key) => !process.env[key]?.trim());
 
+// The local auth bypass treats every request as one user; in production that
+// would open the whole API. Refuse to boot rather than run unauthenticated.
+if (process.env.NODE_ENV === 'production' && process.env.DEV_AUTH_USER_ID) {
+  console.error('DEV_AUTH_USER_ID must not be set when NODE_ENV=production.');
+  process.exit(1);
+}
+
 if (missing.length > 0) {
   console.error(
     `Missing required environment variable(s): ${missing.join(', ')}. ` +

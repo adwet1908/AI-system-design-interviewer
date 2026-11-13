@@ -4,6 +4,17 @@ Newest decisions at the top. Do not delete entries; mark them Superseded instead
 
 ---
 
+## D-031 — Security hardening before deploy
+
+- **Date:** 2026-11-13
+- **Status:** Active
+- **What changed:** `server/config.js` (exit at boot if `DEV_AUTH_USER_ID` is set with `NODE_ENV=production`); `server/server.js` (`helmet()`, JSON 404 for unknown `/api` routes, global JSON error handler); new `server/middleware/validateId.js` (`router.param('id')` in `sessions.js` and `interview.js`); `server/routes/interview.js` (502 no longer includes `detail: err.message`).
+- **Why:** Pre-deploy review. (1) The local auth bypass had no production guard: one copied `.env` would make every visitor the same user, with no login. (2) Raw vendor error text reached clients. (3) Uncaught errors and malformed JSON bodies returned Express's HTML page. (4) A malformed `:id` threw a Mongoose CastError and returned 500.
+- **Alternatives considered:** Deleting the bypass (it is still useful for local curl testing; the boot check removes the production risk). Validating ids inside each handler (seven places; `router.param` is one).
+- **Tradeoffs:** The guard keys off `NODE_ENV`, so hosts must set `NODE_ENV=production`. helmet's default CSP is harmless for a JSON API but would need tuning if the server ever served the client. A malformed id gets the same 404 as a missing one, which is intentional (no difference to probe).
+
+---
+
 ## D-030 — End interview atomically; score in the background with retry
 
 - **Date:** 2026-11-08

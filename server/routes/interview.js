@@ -10,8 +10,10 @@ import {
 import { diagramsEqual, lastDiagramSnapshot } from '../lib/diagram.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { isPastDeadline, minutesLeft } from '../services/sessionTimer.js';
+import { validateSessionId } from '../middleware/validateId.js';
 
 const router = Router();
+router.param('id', validateSessionId);
 
 const MAX_MESSAGE_LEN = 4000;
 const MAX_MESSAGES = 60;
@@ -260,11 +262,9 @@ router.post('/sessions/:id/interview', async (req, res) => {
       return;
     }
 
+    // The cause is logged above; vendor error text is not for the client.
     if (!res.headersSent) {
-      return res.status(502).json({
-        error: 'Interview model call failed',
-        detail: err.message,
-      });
+      return res.status(502).json({ error: 'Interview model call failed' });
     }
 
     if (!res.writableEnded) res.end();
